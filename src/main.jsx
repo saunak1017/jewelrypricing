@@ -37,6 +37,11 @@ function App() {
   async function api(path, opts = {}) {
     const res = await fetch(path, { ...opts, headers: { Authorization: `Bearer ${password}`, ...(opts.body ? { 'Content-Type': 'application/json' } : {}) } });
     const data = await res.json().catch(() => ({}));
+    if (res.status === 401) {
+      localStorage.removeItem('jc_admin_password');
+      setAuthed(false);
+      setNotice('Session expired or password is incorrect. Please log in again.');
+    }
     if (!res.ok) throw new Error(data.error || `Request failed: ${res.status}`);
     return data;
   }
@@ -45,7 +50,9 @@ function App() {
     e?.preventDefault();
     setLoading(true);
     try {
-      await fetch('/api/admin/init', { method: 'POST', headers });
+      const res = await fetch('/api/admin/init', { method: 'POST', headers });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Login failed');
       localStorage.setItem('jc_admin_password', password);
       setAuthed(true);
       await loadDashboard();
