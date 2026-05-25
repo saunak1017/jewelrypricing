@@ -4,5 +4,5 @@ pages_build_output_dir = "dist"
 
 [[d1_databases]]
 binding = "DB"
-database_name = "jewelry-costing-db"
-database_id = "YOUR_D1_DATABASE_ID"
+database_name = "jewelry_pricing"
+database_id = "f3b66a45-05a0-418b-bc28-2519542d057a"
