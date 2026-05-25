@@ -8,7 +8,7 @@ const blankStyle = {
   factory: '', vendor_style_no: '', shivani_style_no: '', jewelry_category: '', metal_kt: '',
   diamond_description: '', diamond_quality: '', stone_count: 0, cttw: 0,
   net_wt_gms: 0, gold_loss_pct: 0, current_gold_lock: 0, gold_per_gram: 0,
-  diamond_handling: 0, total_labor: 0, duty_pct: 7, tariff_pct: 11, notes: ''
+  merchandiser: '', diamond_handling: 0, total_labor: 0, duty_pct: 7, tariff_pct: 11, pendant_chain: 0, earring_backs: 0, cad_fees: 0, margin_pct: 45, selling_price: 0, notes: ''
 };
 const blankComponent = () => ({ id: crypto.randomUUID(), shape: '', quality: '', color_clarity: '', each_weight: '', quantity: '', pricing_mode: 'auto', manual_unitcost: '', manual_total: '', notes: '' });
 
@@ -37,6 +37,11 @@ function App() {
   async function api(path, opts = {}) {
     const res = await fetch(path, { ...opts, headers: { Authorization: `Bearer ${password}`, ...(opts.body ? { 'Content-Type': 'application/json' } : {}) } });
     const data = await res.json().catch(() => ({}));
+    if (res.status === 401) {
+      localStorage.removeItem('jc_admin_password');
+      setAuthed(false);
+      setNotice('Session expired or password is incorrect. Please log in again.');
+    }
     if (!res.ok) throw new Error(data.error || `Request failed: ${res.status}`);
     return data;
   }
@@ -45,7 +50,9 @@ function App() {
     e?.preventDefault();
     setLoading(true);
     try {
-      await fetch('/api/admin/init', { method: 'POST', headers });
+      const res = await fetch('/api/admin/init', { method: 'POST', headers });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Login failed');
       localStorage.setItem('jc_admin_password', password);
       setAuthed(true);
       await loadDashboard();
@@ -187,9 +194,9 @@ function Dashboard({ styles, search, setSearch, loadDashboard, openStyle, archiv
   return <section>
     <div className="topbar"><div><h1>Styles</h1><p>Main costs always recalculate from the active master diamond pricing file.</p></div><button onClick={() => openStyle('new')}><Plus size={18}/> New Style</button></div>
     <div className="search"><Search size={18}/><input value={search} onChange={e => setSearch(e.target.value)} onKeyDown={e => e.key === 'Enter' && loadDashboard()} placeholder="Search style, vendor, factory, category..."/><button onClick={() => loadDashboard()}>Search</button></div>
-    <div className="tableWrap"><table><thead><tr><th>Style</th><th>Vendor</th><th>Category</th><th>Metal</th><th>CTTW</th><th>Diamond</th><th>Export</th><th>Import</th><th>Warnings</th><th></th></tr></thead><tbody>
-      {styles.map(s => <tr key={s.id}><td><b>{s.shivani_style_no || 'Untitled'}</b><small>{s.factory}</small></td><td>{s.vendor_style_no}</td><td>{s.jewelry_category}</td><td>{s.metal_kt}</td><td>{num(s.current?.cttw)}</td><td>{money(s.current?.total_diamond_cost)}</td><td>{money(s.current?.total_export_cost)}</td><td><b>{money(s.current?.total_import_cost)}</b></td><td>{s.missing_price_count ? <span className="warn"><AlertTriangle size={15}/> {s.missing_price_count} missing</span> : '—'}</td><td className="actions"><button onClick={() => openStyle(s.id)}>Edit</button><button onClick={() => duplicateStyle(s.id)}><Copy size={15}/></button><button onClick={() => archiveStyle(s.id)}><Trash2 size={15}/></button></td></tr>)}
-      {!styles.length && <tr><td colSpan="10" className="empty">No styles yet. Create one manually to start.</td></tr>}
+    <div className="tableWrap"><table><thead><tr><th>Style</th><th>Vendor</th><th>Category</th><th>Metal</th><th>CTTW</th><th>Diamond</th><th>Export</th><th>Import</th><th>SP</th><th>Warnings</th><th></th></tr></thead><tbody>
+      {styles.map(s => <tr key={s.id}><td><b>{s.shivani_style_no || 'Untitled'}</b><small>{s.factory}</small></td><td>{s.vendor_style_no}</td><td>{s.jewelry_category}</td><td>{s.metal_kt}</td><td>{num(s.current?.cttw)}</td><td>{money(s.current?.total_diamond_cost)}</td><td>{money(s.current?.total_export_cost)}</td><td><b>{money(s.current?.total_import_cost)}</b>{Number(s.current?.findings_total || 0) > 0 && <small>Including findings/fees</small>}</td><td><b>{money(s.selling_price)}</b>{Number(s.current?.findings_total || 0) > 0 && <small>Including findings/fees</small>}</td><td>{s.missing_price_count ? <span className="warn"><AlertTriangle size={15}/> {s.missing_price_count} missing</span> : '—'}</td><td className="actions"><button onClick={() => openStyle(s.id)}>Edit</button><button onClick={() => duplicateStyle(s.id)}><Copy size={15}/></button><button onClick={() => archiveStyle(s.id)}><Trash2 size={15}/></button></td></tr>)}
+      {!styles.length && <tr><td colSpan="11" className="empty">No styles yet. Create one manually to start.</td></tr>}
     </tbody></table></div>
     <h2>Pricing Uploads</h2><div className="cards">{pricingUploads.map(p => <div className="miniCard" key={p.id}><b>{p.active ? 'Active' : 'Previous'}</b><span>{p.filename}</span><small>{date(p.uploaded_at)} · {p.row_count} rows</small></div>)}</div>
   </section>;
@@ -209,19 +216,25 @@ function Editor({ style, setStyle, components, setComponents, calc, saveStyle, g
     const exportCost = metal + diamond + Number(style.diamond_handling || 0) + Number(style.total_labor || 0);
     const duty = exportCost * (Number(style.duty_pct || 0) / 100);
     const tariff = (exportCost + duty) * (Number(style.tariff_pct || 0) / 100);
-    return { metal, diamond, exportCost, duty, tariff, importCost: exportCost + duty + tariff };
+    const findings = Number(style.pendant_chain || 0) + Number(style.earring_backs || 0) + Number(style.cad_fees || 0);
+    const importCost = exportCost + duty + tariff + findings;
+    const marginPct = Number(style.margin_pct || 0);
+    const suggestedSp = marginPct < 100 ? importCost / (1 - (marginPct / 100)) : 0;
+    return { metal, diamond, exportCost, duty, tariff, findings, importCost, suggestedSp };
   }, [style, components]);
   const totals = calc?.totals || localCalc;
+  const findingsTotal = Number((totals.findings_total ?? totals.findings) || 0);
   return <section>
     <div className="topbar"><div><h1>{style.shivani_style_no || 'New Style'}</h1><p>Save to calculate auto diamond lines from active pricing.</p></div><div className="row"><button className="secondary" onClick={goBack}>Back</button><button onClick={saveStyle}><Save size={18}/> Save & Recalculate</button></div></div>
     <div className="editorGrid">
       <div className="panel"><h2>Style Info</h2><div className="grid2">
-        <Field label="Factory" value={style.factory} onChange={v=>update('factory', v)}/><Field label="Vendor Style No" value={style.vendor_style_no} onChange={v=>update('vendor_style_no', v)}/>
-        <Field label="Shivani Style#" value={style.shivani_style_no} onChange={v=>update('shivani_style_no', v)}/><Field label="Jewelry Category" value={style.jewelry_category} onChange={v=>update('jewelry_category', v)}/>
+        <Field label="Vendor Name" value={style.factory} onChange={v=>update('factory', v)}/><Field label="Vendor Style No" value={style.vendor_style_no} onChange={v=>update('vendor_style_no', v)}/>
+        <Field label="Shivani Style Number" value={style.shivani_style_no} onChange={v=>update('shivani_style_no', v)}/><Field label="Jewelry Category" value={style.jewelry_category} onChange={v=>update('jewelry_category', v)}/>
         <Field label="Metal KT" value={style.metal_kt} onChange={v=>update('metal_kt', v)}/><Field label="Diamond Quality" value={style.diamond_quality} onChange={v=>update('diamond_quality', v)}/>
+        <Field label="Merchandiser" value={style.merchandiser} onChange={v=>update('merchandiser', v)}/>
       </div><Field label="Diamond Description" value={style.diamond_description} onChange={v=>update('diamond_description', v)}/><Field label="Notes" value={style.notes} onChange={v=>update('notes', v)} textarea /></div>
 
-      <div className="panel sticky"><h2>Current Cost Summary</h2><Summary label="Metal Cost" value={totals.total_metal_cost ?? totals.metal}/><Summary label="Diamond Cost" value={totals.total_diamond_cost ?? totals.diamond}/><Summary label="Handling" value={style.diamond_handling}/><Summary label="Labor" value={style.total_labor}/><hr/><Summary label="Export Cost" value={totals.total_export_cost ?? totals.exportCost} bold/><Summary label={`Duty (${style.duty_pct || 0}%)`} value={totals.duty}/><Summary label={`Tariff (${style.tariff_pct || 0}%)`} value={totals.tariff}/><Summary label="Import Cost" value={totals.total_import_cost ?? totals.importCost} big/><small>Gold loss % is stored for reference only and is not included in metal cost.</small></div>
+      <div className="panel sticky"><h2>Current Cost Summary</h2><Summary label="Metal Cost" value={totals.total_metal_cost ?? totals.metal}/><Summary label="Diamond Cost" value={totals.total_diamond_cost ?? totals.diamond}/><Summary label="Handling" value={style.diamond_handling}/><Summary label="Labor" value={style.total_labor}/><hr/><Summary label="Export Cost" value={totals.total_export_cost ?? totals.exportCost} bold/><Summary label={`Duty (${style.duty_pct || 0}%)`} value={totals.duty}/><Summary label={`Tariff (${style.tariff_pct || 0}%)`} value={totals.tariff}/><Summary label="Findings / Other Fees" value={totals.findings_total ?? totals.findings}/><Summary label="Import Cost" value={totals.total_import_cost ?? totals.importCost} big/>{findingsTotal > 0 && <small>Including chain, earring backs, and/or CAD fees.</small>}<small>Gold loss % is stored for reference only and is not included in metal cost.</small></div>
     </div>
 
     <div className="panel"><h2>Gold / Metal</h2><div className="grid4"><Field type="number" label="Net wt. in gms" value={style.net_wt_gms} onChange={v=>update('net_wt_gms', v)}/><Field type="number" label="Gold Loss % (reference only)" value={style.gold_loss_pct} onChange={v=>update('gold_loss_pct', v)}/><Field type="number" label="Current Gold Lock" value={style.current_gold_lock} onChange={v=>update('current_gold_lock', v)}/><Field type="number" label="Gold per Gram $" value={style.gold_per_gram} onChange={v=>update('gold_per_gram', v)}/></div></div>
@@ -230,7 +243,9 @@ function Editor({ style, setStyle, components, setComponents, calc, saveStyle, g
       const resolved = calc?.components?.[i];
       return <tr key={c.id || i}><td><input value={c.shape || ''} onChange={e=>updateComp(i,'shape',e.target.value)} placeholder="MQ"/></td><td><input value={c.quality || ''} onChange={e=>updateComp(i,'quality',e.target.value)} placeholder="E"/></td><td><input type="number" step="0.001" value={c.each_weight || ''} onChange={e=>updateComp(i,'each_weight',e.target.value)}/></td><td><input type="number" step="1" value={c.quantity || ''} onChange={e=>updateComp(i,'quantity',e.target.value)}/></td><td><select value={c.pricing_mode || 'auto'} onChange={e=>updateComp(i,'pricing_mode',e.target.value)}><option value="auto">Auto</option><option value="manual_unit">Manual $/ct</option><option value="manual_total">Manual total</option></select></td><td><input type="number" value={c.manual_unitcost || ''} onChange={e=>updateComp(i,'manual_unitcost',e.target.value)}/></td><td><input type="number" value={c.manual_total || ''} onChange={e=>updateComp(i,'manual_total',e.target.value)}/></td><td>{resolved?.match_status === 'missing_price' ? <span className="warn">Missing</span> : money(resolved?.resolved_unitcost || 0)}</td><td>{money(resolved?.line_total || 0)}</td><td><button className="icon" onClick={()=>setComponents(components.filter((_,x)=>x!==i))}><Trash2 size={15}/></button></td></tr>})}</tbody></table></div></div>
 
-    <div className="panel"><h2>Other Costs / Import</h2><div className="grid4"><Field type="number" label="Diamond Handling" value={style.diamond_handling} onChange={v=>update('diamond_handling', v)}/><Field type="number" label="Total Labor" value={style.total_labor} onChange={v=>update('total_labor', v)}/><Field type="number" label="Duty %" value={style.duty_pct} onChange={v=>update('duty_pct', v)}/><Field type="number" label="Tariff %" value={style.tariff_pct} onChange={v=>update('tariff_pct', v)}/></div></div>
+    <div className="panel"><h2>Other Costs / Import</h2><div className="grid4"><Field type="number" label="Diamond Handling" value={style.diamond_handling} onChange={v=>update('diamond_handling', v)}/><Field type="number" label="Total Labor" value={style.total_labor} onChange={v=>update('total_labor', v)}/><Field type="number" label="Duty %" value={style.duty_pct} onChange={v=>update('duty_pct', v)}/><Field type="number" label="Tariff %" value={style.tariff_pct} onChange={v=>update('tariff_pct', v)}/></div><h2>Findings / Other Fees</h2><div className="grid4"><Field type="number" label="Pendant Chain" value={style.pendant_chain} onChange={v=>update('pendant_chain', v)}/><Field type="number" label="Earring Backs" value={style.earring_backs} onChange={v=>update('earring_backs', v)}/><Field type="number" label="CAD Fees" value={style.cad_fees} onChange={v=>update('cad_fees', v)}/></div></div>
+
+    <div className="panel"><h2>Margin Calculator</h2><div className="grid4"><Field type="number" label="Margin %" value={style.margin_pct} onChange={v=>update('margin_pct', v)}/><Summary label="Suggested SP" value={totals.suggestedSp ?? localCalc.suggestedSp}/><Field type="number" label="SP" value={style.selling_price} onChange={v=>update('selling_price', v)}/></div>{findingsTotal > 0 && <small>SP includes any chain, earring backs, and/or CAD fees included above.</small>}</div>
 
     <div className="panel"><h2><History size={18}/> Historical Pricing</h2><table><thead><tr><th>Date</th><th>Reason</th><th>Export</th><th>Duty</th><th>Tariff</th><th>Import</th></tr></thead><tbody>{history.map(h => <tr key={h.id}><td>{date(h.snapshot_at)}</td><td>{h.reason}</td><td>{money(h.total_export_cost)}</td><td>{money(h.duty)}</td><td>{money(h.tariff)}</td><td><b>{money(h.total_import_cost)}</b></td></tr>)}{!history.length && <tr><td colSpan="6" className="empty">No history yet. History is created when a new diamond pricing file is uploaded.</td></tr>}</tbody></table></div>
   </section>;
