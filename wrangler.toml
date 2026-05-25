@@ -1,0 +1,8 @@
+name = "jewelry-costing-app"
+compatibility_date = "2026-05-25"
+pages_build_output_dir = "dist"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "jewelry_pricing"
+database_id = "f3b66a45-05a0-418b-bc28-2519542d057a"
