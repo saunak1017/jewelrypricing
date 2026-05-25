@@ -74,10 +74,16 @@ export async function ensureSchema(db) {
       gold_loss_pct REAL DEFAULT 0,
       current_gold_lock REAL DEFAULT 0,
       gold_per_gram REAL DEFAULT 0,
+      merchandiser TEXT,
       diamond_handling REAL DEFAULT 0,
       total_labor REAL DEFAULT 0,
       duty_pct REAL DEFAULT 7,
       tariff_pct REAL DEFAULT 11,
+      pendant_chain REAL DEFAULT 0,
+      earring_backs REAL DEFAULT 0,
+      cad_fees REAL DEFAULT 0,
+      margin_pct REAL DEFAULT 45,
+      selling_price REAL DEFAULT 0,
       notes TEXT,
       archived INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
@@ -116,6 +122,18 @@ export async function ensureSchema(db) {
       FOREIGN KEY(style_id) REFERENCES styles(id) ON DELETE CASCADE
     )`)
   ]);
+
+  const styleColumns = [
+    ["merchandiser", "TEXT DEFAULT ''"],
+    ["pendant_chain", "REAL DEFAULT 0"],
+    ["earring_backs", "REAL DEFAULT 0"],
+    ["cad_fees", "REAL DEFAULT 0"],
+    ["margin_pct", "REAL DEFAULT 45"],
+    ["selling_price", "REAL DEFAULT 0"]
+  ];
+  for (const [name, type] of styleColumns) {
+    await db.prepare(`ALTER TABLE styles ADD COLUMN ${name} ${type}`).run().catch(() => {});
+  }
 }
 
 export async function getActiveUpload(db) {
@@ -194,7 +212,8 @@ export async function calculateStyle(db, style, components, activeUpload = null)
   const exportCost = totalMetalCost + totalDiamondCost + handling + labor;
   const duty = exportCost * (toNumber(style.duty_pct, 7) / 100);
   const tariff = (exportCost + duty) * (toNumber(style.tariff_pct, 11) / 100);
-  const importCost = exportCost + duty + tariff;
+  const findings = toNumber(style.pendant_chain) + toNumber(style.earring_backs) + toNumber(style.cad_fees);
+  const importCost = exportCost + duty + tariff + findings;
 
   return {
     active_pricing_upload: upload || null,
@@ -209,6 +228,7 @@ export async function calculateStyle(db, style, components, activeUpload = null)
       total_export_cost: round(exportCost),
       duty: round(duty),
       tariff: round(tariff),
+      findings_total: round(findings),
       total_import_cost: round(importCost)
     }
   };
