@@ -36,7 +36,7 @@ export async function onRequestPost(context) {
   } else {
     await db.prepare(`INSERT INTO styles (id, factory, vendor_style_no, shivani_style_no, jewelry_category, metal_kt, diamond_description, diamond_quality,
       stone_count, cttw, net_wt_gms, gold_loss_pct, current_gold_lock, gold_per_gram, merchandiser, diamond_handling, total_labor, duty_pct, tariff_pct, pendant_chain, earring_backs, cad_fees, margin_pct, selling_price, notes, archived, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`)
       .bind(id, s.factory || '', s.vendor_style_no || '', s.shivani_style_no || '', s.jewelry_category || '', s.metal_kt || '', s.diamond_description || '', s.diamond_quality || '',
         Number(s.stone_count || 0), Number(s.cttw || 0), Number(s.net_wt_gms || 0), Number(s.gold_loss_pct || 0), Number(s.current_gold_lock || 0), Number(s.gold_per_gram || 0), s.merchandiser || '', Number(s.diamond_handling || 0), Number(s.total_labor || 0),
         Number(s.duty_pct ?? 7), Number(s.tariff_pct ?? 11), Number(s.pendant_chain || 0), Number(s.earring_backs || 0), Number(s.cad_fees || 0), Number(s.margin_pct ?? 45), Number(s.selling_price || 0), s.notes || '', now, now).run();
