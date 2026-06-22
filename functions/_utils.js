@@ -85,6 +85,11 @@ export async function ensureSchema(db) {
       margin_pct REAL DEFAULT 45,
       selling_price REAL DEFAULT 0,
       notes TEXT,
+      image_filename TEXT,
+      image_data_url TEXT,
+      model_filename TEXT,
+      model_data_url TEXT,
+      model_mime_type TEXT,
       archived INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
@@ -102,6 +107,19 @@ export async function ensureSchema(db) {
       manual_unitcost REAL DEFAULT 0,
       manual_total REAL DEFAULT 0,
       notes TEXT,
+      FOREIGN KEY(style_id) REFERENCES styles(id) ON DELETE CASCADE
+    )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS style_orders (
+      id TEXT PRIMARY KEY,
+      style_id TEXT NOT NULL,
+      customer TEXT,
+      order_date TEXT,
+      quantity TEXT,
+      price TEXT,
+      buying_group TEXT,
+      memo_or_asset TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
       FOREIGN KEY(style_id) REFERENCES styles(id) ON DELETE CASCADE
     )`),
     db.prepare(`CREATE TABLE IF NOT EXISTS cost_history (
@@ -129,7 +147,12 @@ export async function ensureSchema(db) {
     ["earring_backs", "REAL DEFAULT 0"],
     ["cad_fees", "REAL DEFAULT 0"],
     ["margin_pct", "REAL DEFAULT 45"],
-    ["selling_price", "REAL DEFAULT 0"]
+    ["selling_price", "REAL DEFAULT 0"],
+    ["image_filename", "TEXT DEFAULT ''"],
+    ["image_data_url", "TEXT DEFAULT ''"],
+    ["model_filename", "TEXT DEFAULT ''"],
+    ["model_data_url", "TEXT DEFAULT ''"],
+    ["model_mime_type", "TEXT DEFAULT ''"]
   ];
   for (const [name, type] of styleColumns) {
     await db.prepare(`ALTER TABLE styles ADD COLUMN ${name} ${type}`).run().catch(() => {});
