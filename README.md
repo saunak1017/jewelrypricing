@@ -135,9 +135,9 @@ The application defensively creates its schema on an authenticated request. For 
 npx wrangler d1 execute jewelry_pricing --remote --file=migrations/0002_sales_scanning.sql
 ```
 
-The equivalent Cloudflare workflow is **D1 → jewelry_pricing → Console**, paste `migrations/0002_sales_scanning.sql`, and execute it once. The `ALTER TABLE` statements are intentionally a one-time migration; `ensureSchema` tolerates already-present columns during normal requests.
+The equivalent Cloudflare workflow is **D1 → jewelry_pricing → Console**, paste `migrations/0002_sales_scanning.sql`, and execute it once. Cloudflare reporting **“This query returned no data” is the expected success result** for `CREATE TABLE`, `CREATE INDEX`, and `ALTER TABLE`: those statements change the schema but do not return rows. Do not paste the migration a second time after that message, because its `ALTER TABLE` statements are intentionally one-time operations. The application's `ensureSchema` helper tolerates already-present columns during normal requests.
 
-Verify the main tables afterward:
+Verify the migration afterward by opening a new D1 Console query and pasting `migrations/verify_0002_sales_scanning.sql`, or run its table check directly:
 
 ```sql
 SELECT name FROM sqlite_schema WHERE type = 'table' AND name IN ('users','sessions','audit_log','style_selections','barcode_uploads','scan_sessions','scan_items') ORDER BY name;
