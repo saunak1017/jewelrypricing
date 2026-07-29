@@ -101,3 +101,56 @@ admin123
 ```
 
 Change this by setting the `ADMIN_PASSWORD` environment variable in Cloudflare Pages.
+
+## Multi-user login and production setup
+
+The login remains password-only, but each password maps to a named user and creates a seven-day HTTP-only session. Every style, order, selection, barcode, alias, and scan mutation is written to `audit_log` with that identity.
+
+Set `USER_PASSWORDS` as an **encrypted Cloudflare secret**. Do not add the real value to this repository. Its value is one JSON object whose keys are display names and whose values are passwords:
+
+```json
+{"Person One":"replace-me","Person Two":"replace-me"}
+```
+
+Cloudflare dashboard:
+
+1. Open **Workers & Pages → jewelry-costing-app → Settings → Variables and Secrets**.
+2. Add `USER_PASSWORDS`, select **Secret**, and paste the one-line JSON value.
+3. Add it to Production (and Preview if preview deployments should accept the same passwords).
+4. Redeploy the Pages project.
+
+Wrangler alternative:
+
+```bash
+npx wrangler pages secret put USER_PASSWORDS --project-name jewelry-costing-app
+```
+
+`ADMIN_PASSWORD` remains a backwards-compatible single-user fallback. When neither secret is set, local development uses `admin123` for the `Administrator` identity.
+
+## D1 upgrade
+
+The application defensively creates its schema on an authenticated request. For a controlled production rollout, run the checked-in migration once before deploying:
+
+```bash
+npx wrangler d1 execute jewelry_pricing --remote --file=migrations/0002_sales_scanning.sql
+```
+
+The equivalent Cloudflare workflow is **D1 → jewelry_pricing → Console**, paste `migrations/0002_sales_scanning.sql`, and execute it once. The `ALTER TABLE` statements are intentionally a one-time migration; `ensureSchema` tolerates already-present columns during normal requests.
+
+Verify the main tables afterward:
+
+```sql
+SELECT name FROM sqlite_schema WHERE type = 'table' AND name IN ('users','sessions','audit_log','style_selections','barcode_uploads','scan_sessions','scan_items') ORDER BY name;
+```
+
+## Legacy style import
+
+**Import Existing Styles** accepts `.xlsx`, `.xls`, and `.csv`. `Shivani Style#` is the case-insensitive unique identity. The review screen collapses exact duplicates and requires a source-row choice for conflicting duplicates. Unique Customer values become editable draft **selections**, not orders.
+
+Legacy styles display the workbook's exact metal, diamond, export, duty, tariff, import, stone-count, and CTTW totals. Adding components does not silently replace them. **Switch to Calculated Costs** explicitly snapshots the imported totals and changes the style to the live calculator.
+
+## Barcode scanning and export
+
+**Upload Barcode Master** persists the active workbook in D1 until another upload replaces it. The importer recognizes common `Barcode`/`Barcode Number` and `Style`/`Style Number` headers. Exact style matches resolve immediately. Missing SIL/ALY-style variants use the leading-letters-plus-digits base key and require confirmation; remembered mappings are reviewed again when the candidate set changes, unless configured to always ask.
+
+Scan sessions are saved in D1 and offer Costing and Presentation modes. Duplicate scans ask whether to increase quantity. Export creates one ZIP with `Selection.xlsx` plus an `Images/` folder. Diamond quality codes are expanded to the customer-facing descriptions specified by the business export format.

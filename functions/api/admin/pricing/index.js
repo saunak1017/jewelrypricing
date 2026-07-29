@@ -1,4 +1,4 @@
-import { ensureSchema, json, requireAdmin, uid, nowIso, snapshotAllStyles } from '../../../_utils.js';
+import { audit, ensureSchema, json, requireAdmin, uid, nowIso, snapshotAllStyles } from '../../../_utils.js';
 
 export async function onRequestGet(context) {
   const unauthorized = await requireAdmin(context);
@@ -44,5 +44,6 @@ export async function onRequestPost(context) {
   for (let i = 0; i < stmts.length; i += 50) {
     await db.batch(stmts.slice(i, i + 50));
   }
+  await audit(db, context.data.user, 'DIAMOND_PRICING_UPLOADED', 'pricing_upload', uploadId, null, { filename: body.filename, row_count: rows.length });
   return json({ ok: true, upload_id: uploadId, row_count: rows.length, uploaded_at: now });
 }
