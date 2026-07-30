@@ -194,5 +194,13 @@ Scan sessions are saved in D1 and offer Costing and Presentation modes. Duplicat
 - If `USER_PASSWORDS` is absent, the backwards-compatible `ADMIN_PASSWORD` is used; if both are absent, the temporary fallback login is `admin123`. A malformed `USER_PASSWORDS` secret now produces a specific configuration error instead of looking like an incorrect password. The parser accepts the documented JSON object and also repairs the commonly pasted `"Name":"password"` form.
 - Existing session cookies are restored when the page opens, so refreshing no longer sends a signed-in user back to the login form.
 - A scanner that sends Enter adds its barcode immediately. With **Auto-add after scan** enabled, input is also submitted after a short pause without clicking a button. Multiple barcodes can be pasted one per line and added as a batch.
-- Quantity, markup, and final price are edited locally and saved on blur or Enter. This avoids an API request and complete table reload for every keystroke.
+- Quantity, markup, and final price are edited entirely in the browser with no network request per keystroke. **Save Price Changes** persists all edited rows in one request, and **Log Selections** saves pending price edits automatically before creating selections.
 - Completing a scan session creates or updates one selection per scanned style using the session customer, meeting date, final price, and cost snapshot. Re-completing the same session updates its linked selections rather than duplicating them.
+
+### Individual Cloudflare password secrets
+
+As an alternative to `USER_PASSWORDS`, each password can be stored separately in Cloudflare. Add each entry as an encrypted **Secret** using these variable names: `Saunak_Password`, `Atit_Password`, `Mehul_Password`, `Mayur_Password`, `Bhavesh_Password`, `Sanil_Password`, `Kyi_Password`, `Hema_Password`, and `Kirti_Password`. The Value for each secret is only that person's actual password. Uppercase forms such as `SAUNAK_PASSWORD` are also supported. Save the secrets for Production and redeploy.
+
+### Repeatable scanning repair migration
+
+If the original migration was partial or its result is uncertain, open **D1 → jewelry_pricing → Console** and paste `migrations/0003_scanning_repair.sql`. Unlike the original one-time migration, this repair file contains only repeatable `CREATE TABLE IF NOT EXISTS` and `CREATE INDEX IF NOT EXISTS` statements, so it is safe to run again. Its final query should return seven scanning tables with status `ok`. The deployed application also checks for missing columns automatically.

@@ -25,3 +25,22 @@ test('keeps the legacy and local fallback paths', () => {
   assert.deepEqual(configuredUsers({ ADMIN_PASSWORD: 'legacy' }), { Administrator: 'legacy' });
   assert.deepEqual(configuredUsers({}), { Administrator: 'admin123' });
 });
+
+test('reads individually configured Cloudflare password secrets', () => {
+  assert.deepEqual(configuredUsers({
+    Saunak_Password: 'saunak-secret',
+    ATIT_PASSWORD: 'atit-secret',
+    Mehul_PASSWORD: 'mehul-secret'
+  }), {
+    Saunak: 'saunak-secret',
+    Atit: 'atit-secret',
+    Mehul: 'mehul-secret'
+  });
+});
+
+test('individual secrets can override one user in the JSON object', () => {
+  assert.deepEqual(configuredUsers({
+    USER_PASSWORDS: '{"Saunak":"old","Atit":"atit-secret"}',
+    Saunak_Password: 'new'
+  }), { Saunak: 'new', Atit: 'atit-secret' });
+});

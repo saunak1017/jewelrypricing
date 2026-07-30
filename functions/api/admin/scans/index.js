@@ -50,15 +50,18 @@ export async function onRequestPut(context) {
     if (!(items.results || []).length) return json({ error: 'Scan at least one piece before logging selections.' }, 400);
     const meetingDate = body.meeting_date || now.slice(0, 10);
     for (const item of items.results || []) {
-      const existing = await db.prepare(`SELECT id FROM style_selections WHERE scan_item_id=? LIMIT 1`).bind(item.id).first();
+      const existing = await db.prepare(`SELECT l.selection_id AS id FROM scan_selection_links l WHERE l.scan_item_id=? LIMIT 1`).bind(item.id).first();
       if (existing) {
         await db.prepare(`UPDATE style_selections SET customer=?,meeting_date=?,proposed_price=?,cost_snapshot=?,status='complete',updated_by=?,updated_at=? WHERE id=?`)
           .bind(customer, meetingDate, item.final_price, item.cost_snapshot, context.data.user.id, now, existing.id).run();
       } else {
-        await db.prepare(`INSERT INTO style_selections (id,style_id,customer,meeting_date,proposed_price,buying_group,modifications,status,cost_snapshot,created_by,updated_by,scan_session_id,scan_item_id,created_at,updated_at)
-          VALUES (?,?,?,?,?,'',0,'complete',?,?,?,?,?,?,?)`)
-          .bind(uid('selection'), item.style_id, customer, meetingDate, item.final_price, item.cost_snapshot,
-            context.data.user.id, context.data.user.id, body.id, item.id, now, now).run();
+        const selectionId = uid('selection');
+        await db.prepare(`INSERT INTO style_selections (id,style_id,customer,meeting_date,proposed_price,buying_group,modifications,status,cost_snapshot,created_by,updated_by,created_at,updated_at)
+          VALUES (?,?,?,?,?,'',0,'complete',?,?,?,?,?)`)
+          .bind(selectionId, item.style_id, customer, meetingDate, item.final_price, item.cost_snapshot,
+            context.data.user.id, context.data.user.id, now, now).run();
+        await db.prepare(`INSERT INTO scan_selection_links (scan_item_id,selection_id,scan_session_id,created_at) VALUES (?,?,?,?)`)
+          .bind(item.id, selectionId, body.id, now).run();
         selectionsLogged++;
       }
     }

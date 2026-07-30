@@ -12,6 +12,7 @@ CREATE INDEX IF NOT EXISTS idx_barcode_lookup ON barcode_mappings(upload_id, bar
 CREATE TABLE IF NOT EXISTS style_aliases (id TEXT PRIMARY KEY, source_style_no TEXT NOT NULL UNIQUE, target_style_id TEXT NOT NULL, candidate_signature TEXT, prompt_on_multiple INTEGER DEFAULT 0, confirmed_by TEXT, confirmed_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS scan_sessions (id TEXT PRIMARY KEY, name TEXT, customer TEXT, mode TEXT NOT NULL, default_markup REAL DEFAULT 45, created_by TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, status TEXT DEFAULT 'open');
 CREATE TABLE IF NOT EXISTS scan_items (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, barcode TEXT, source_style_no TEXT, style_id TEXT, quantity INTEGER DEFAULT 1, cost_snapshot REAL DEFAULT 0, cttw_snapshot REAL DEFAULT 0, markup_pct REAL DEFAULT 45, final_price REAL DEFAULT 0, resolution_status TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(session_id) REFERENCES scan_sessions(id) ON DELETE CASCADE);
+CREATE TABLE IF NOT EXISTS scan_selection_links (scan_item_id TEXT PRIMARY KEY, selection_id TEXT NOT NULL, scan_session_id TEXT NOT NULL, created_at TEXT NOT NULL);
 ALTER TABLE styles ADD COLUMN cost_source TEXT DEFAULT 'calculated';
 ALTER TABLE styles ADD COLUMN imported_stone_count REAL DEFAULT 0;
 ALTER TABLE styles ADD COLUMN imported_cttw REAL DEFAULT 0;

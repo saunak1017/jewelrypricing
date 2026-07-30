@@ -1,5 +1,5 @@
 -- Safe to run repeatedly. This query only reads schema metadata.
--- A successful deployment returns 25 rows, all with status "ok".
+-- A successful deployment returns 26 rows, all with status "ok".
 SELECT 'table.' || required.name AS schema_item,
        CASE WHEN actual.name IS NOT NULL THEN 'ok' ELSE 'missing' END AS status
 FROM (
@@ -7,7 +7,8 @@ FROM (
   SELECT 'audit_log' UNION ALL SELECT 'style_selections' UNION ALL
   SELECT 'style_imports' UNION ALL SELECT 'barcode_uploads' UNION ALL
   SELECT 'barcode_mappings' UNION ALL SELECT 'style_aliases' UNION ALL
-  SELECT 'scan_sessions' UNION ALL SELECT 'scan_items'
+  SELECT 'scan_sessions' UNION ALL SELECT 'scan_items' UNION ALL
+  SELECT 'scan_selection_links'
 ) required
 LEFT JOIN sqlite_schema actual
   ON actual.type = 'table' AND actual.name = required.name
