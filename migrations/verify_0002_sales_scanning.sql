@@ -1,5 +1,5 @@
 -- Safe to run repeatedly. This query only reads schema metadata.
--- A successful migration returns 23 rows, all with status "ok".
+-- A successful deployment returns 25 rows, all with status "ok".
 SELECT 'table.' || required.name AS schema_item,
        CASE WHEN actual.name IS NOT NULL THEN 'ok' ELSE 'missing' END AS status
 FROM (
@@ -34,4 +34,11 @@ FROM (
   SELECT 'created_by' UNION ALL SELECT 'updated_by'
 ) required
 LEFT JOIN pragma_table_info('style_orders') actual ON actual.name = required.name
+
+UNION ALL
+
+SELECT 'style_selections.' || required.name AS schema_item,
+       CASE WHEN actual.name IS NOT NULL THEN 'ok' ELSE 'missing' END AS status
+FROM (SELECT 'scan_session_id' AS name UNION ALL SELECT 'scan_item_id') required
+LEFT JOIN pragma_table_info('style_selections') actual ON actual.name = required.name
 ORDER BY schema_item;

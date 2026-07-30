@@ -12,10 +12,17 @@ const DEFAULT_USERS = { Administrator: "admin123" };
 const SESSION_COOKIE = "jc_session";
 
 export function configuredUsers(env) {
-  try {
-    const parsed = JSON.parse(env.USER_PASSWORDS || "");
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
-  } catch (_) { /* Fall through to the backwards-compatible configuration. */ }
+  const raw = String(env.USER_PASSWORDS || "").trim();
+  if (raw) {
+    for (const candidate of [raw, `{${raw}}`]) {
+      try {
+        let parsed = JSON.parse(candidate);
+        if (typeof parsed === "string") parsed = JSON.parse(parsed);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && Object.keys(parsed).length) return parsed;
+      } catch (_) { /* Try the next supported representation. */ }
+    }
+    throw new Error('USER_PASSWORDS is invalid. Use one JSON object such as {"Atit":"password","Mehul":"password"}.');
+  }
   return env.ADMIN_PASSWORD ? { Administrator: env.ADMIN_PASSWORD } : DEFAULT_USERS;
 }
 
@@ -37,7 +44,10 @@ export async function requireAdmin(context) {
   }
   // Keep Bearer authentication working during deployment and local migration.
   const auth = (context.request.headers.get("authorization") || "").replace(/^Bearer\s+/i, "").trim();
-  const match = Object.entries(configuredUsers(context.env)).find(([, password]) => String(password) === auth);
+  let users;
+  try { users = configuredUsers(context.env); }
+  catch (error) { return json({ error: error.message }, 500); }
+  const match = Object.entries(users).find(([, password]) => String(password) === auth);
   if (match) {
     const id = `user_${slug(match[0])}`;
     await upsertUser(db, id, match[0]);
@@ -79,7 +89,19 @@ export function nowIso() {
   return new Date().toISOString();
 }
 
+const schemaPromises = new WeakMap();
+
 export async function ensureSchema(db) {
+  if (schemaPromises.has(db)) return schemaPromises.get(db);
+  const promise = initializeSchema(db).catch(error => {
+    schemaPromises.delete(db);
+    throw error;
+  });
+  schemaPromises.set(db, promise);
+  return promise;
+}
+
+async function initializeSchema(db) {
   await db.batch([
     db.prepare(`CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, name TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`),
     db.prepare(`CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, user_id TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL, FOREIGN KEY(user_id) REFERENCES users(id))`),
@@ -176,7 +198,7 @@ export async function ensureSchema(db) {
     db.prepare(`CREATE TABLE IF NOT EXISTS style_selections (
       id TEXT PRIMARY KEY, style_id TEXT NOT NULL, customer TEXT, meeting_date TEXT, proposed_price REAL, buying_group TEXT,
       modifications INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'complete', cost_snapshot REAL DEFAULT 0,
-      created_by TEXT, updated_by TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+      created_by TEXT, updated_by TEXT, scan_session_id TEXT, scan_item_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
       FOREIGN KEY(style_id) REFERENCES styles(id) ON DELETE CASCADE
     )`),
     db.prepare(`CREATE TABLE IF NOT EXISTS style_imports (id TEXT PRIMARY KEY, filename TEXT, row_count INTEGER DEFAULT 0, imported_at TEXT NOT NULL, imported_by TEXT)`),
@@ -223,12 +245,19 @@ export async function ensureSchema(db) {
     ["imported_export_cost", "REAL DEFAULT 0"], ["imported_duty", "REAL DEFAULT 0"],
     ["imported_tariff", "REAL DEFAULT 0"], ["imported_import_cost", "REAL DEFAULT 0"]
   ];
-  for (const [name, type] of styleColumns) {
-    await db.prepare(`ALTER TABLE styles ADD COLUMN ${name} ${type}`).run().catch(() => {});
-  }
+  const styleInfo = await db.prepare(`PRAGMA table_info(styles)`).all();
+  const existingStyleColumns = new Set((styleInfo.results || []).map(column => column.name));
+  for (const [name, type] of styleColumns) if (!existingStyleColumns.has(name)) await db.prepare(`ALTER TABLE styles ADD COLUMN ${name} ${type}`).run();
   const orderColumns = [["status", "TEXT DEFAULT 'complete'"], ["cost_snapshot", "REAL DEFAULT 0"], ["created_by", "TEXT"], ["updated_by", "TEXT"]];
-  for (const [name, type] of orderColumns) await db.prepare(`ALTER TABLE style_orders ADD COLUMN ${name} ${type}`).run().catch(() => {});
-  for (const [name, type] of [["cost_snapshot", "REAL DEFAULT 0"], ["cttw_snapshot", "REAL DEFAULT 0"]]) await db.prepare(`ALTER TABLE scan_items ADD COLUMN ${name} ${type}`).run().catch(() => {});
+  const orderInfo = await db.prepare(`PRAGMA table_info(style_orders)`).all();
+  const existingOrderColumns = new Set((orderInfo.results || []).map(column => column.name));
+  for (const [name, type] of orderColumns) if (!existingOrderColumns.has(name)) await db.prepare(`ALTER TABLE style_orders ADD COLUMN ${name} ${type}`).run();
+  const selectionInfo = await db.prepare(`PRAGMA table_info(style_selections)`).all();
+  const existingSelectionColumns = new Set((selectionInfo.results || []).map(column => column.name));
+  for (const [name, type] of [["scan_session_id", "TEXT"], ["scan_item_id", "TEXT"]]) if (!existingSelectionColumns.has(name)) await db.prepare(`ALTER TABLE style_selections ADD COLUMN ${name} ${type}`).run();
+  const scanInfo = await db.prepare(`PRAGMA table_info(scan_items)`).all();
+  const existingScanColumns = new Set((scanInfo.results || []).map(column => column.name));
+  for (const [name, type] of [["cost_snapshot", "REAL DEFAULT 0"], ["cttw_snapshot", "REAL DEFAULT 0"]]) if (!existingScanColumns.has(name)) await db.prepare(`ALTER TABLE scan_items ADD COLUMN ${name} ${type}`).run();
 }
 
 export async function getActiveUpload(db) {

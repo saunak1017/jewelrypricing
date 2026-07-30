@@ -106,18 +106,42 @@ Change this by setting the `ADMIN_PASSWORD` environment variable in Cloudflare P
 
 The login remains password-only, but each password maps to a named user and creates a seven-day HTTP-only session. Every style, order, selection, barcode, alias, and scan mutation is written to `audit_log` with that identity.
 
-Set `USER_PASSWORDS` as an **encrypted Cloudflare secret**. Do not add the real value to this repository. Its value is one JSON object whose keys are display names and whose values are passwords:
+Set one encrypted Cloudflare secret with these fields:
+
+```text
+Variable name: USER_PASSWORDS
+Type: Secret (encrypted)
+Value: one JSON object containing every name/password pair
+```
+
+Do not put only one password in the Value field, and do not create one Cloudflare variable per person. The value must be valid, one-line JSON whose keys are the names displayed in the app and whose values are the corresponding passwords. Do not add the real value to this repository. For example:
 
 ```json
 {"Person One":"replace-me","Person Two":"replace-me"}
 ```
 
+The surrounding curly braces are required. For example, this by itself is **not valid** and will not work:
+
+```text
+"Atit":"actual-password"
+```
+
+A one-person JSON value would need to be `{"Atit":"actual-password"}`, but the production value should contain **all users inside the same pair of braces**, separated by commas:
+
+```json
+{"Atit":"actual-password","Mehul":"actual-password","Mayur":"actual-password"}
+```
+
+Replace the example values with the corresponding real passwords and include the remaining users in that same object.
+
 Cloudflare dashboard:
 
 1. Open **Workers & Pages → jewelry-costing-app → Settings → Variables and Secrets**.
-2. Add `USER_PASSWORDS`, select **Secret**, and paste the one-line JSON value.
-3. Add it to Production (and Preview if preview deployments should accept the same passwords).
-4. Redeploy the Pages project.
+2. Click **Add variable** and enter `USER_PASSWORDS` in **Variable name**.
+3. Select **Secret** (encrypted), not plain-text Variable.
+4. In **Value**, paste the complete one-line JSON object containing all users and their actual passwords; do not paste a password by itself.
+5. Save it for Production (and Preview if preview deployments should accept the same passwords).
+6. Redeploy the Pages project.
 
 Wrangler alternative:
 
@@ -151,6 +175,24 @@ Legacy styles display the workbook's exact metal, diamond, export, duty, tariff,
 
 ## Barcode scanning and export
 
-**Upload Barcode Master** persists the active workbook in D1 until another upload replaces it. The importer recognizes common `Barcode`/`Barcode Number` and `Style`/`Style Number` headers. Exact style matches resolve immediately. Missing SIL/ALY-style variants use the leading-letters-plus-digits base key and require confirmation; remembered mappings are reviewed again when the candidate set changes, unless configured to always ask.
+The barcode master should use the first worksheet and exactly this simple layout:
+
+| Column | Header | Meaning |
+|---|---|---|
+| A | `Style Number` | Shivani Style Number |
+| B | `Barcode` | Barcode scanned or entered manually |
+
+The importer reads both columns as displayed text so formatted barcodes, including values with leading zeroes, are preserved. A ready-to-fill CSV is available at `templates/barcode-master-template.csv`.
+
+**Upload Barcode Master** persists the active workbook in D1 until another upload replaces it. Exact style matches resolve immediately. Missing SIL/ALY-style variants use the leading-letters-plus-digits base key and require confirmation; remembered mappings are reviewed again when the candidate set changes, unless configured to always ask.
 
 Scan sessions are saved in D1 and offer Costing and Presentation modes. Duplicate scans ask whether to increase quantity. Export creates one ZIP with `Selection.xlsx` plus an `Images/` folder. Diamond quality codes are expanded to the customer-facing descriptions specified by the business export format.
+
+## Login, schema, and scanning troubleshooting
+
+- On deployment, the app checks and repairs its required D1 schema automatically before authentication. `ensureSchema` now caches that work per Cloudflare isolate and checks existing columns before issuing `ALTER TABLE`, avoiding repeated failed migration queries on every scan request.
+- If `USER_PASSWORDS` is absent, the backwards-compatible `ADMIN_PASSWORD` is used; if both are absent, the temporary fallback login is `admin123`. A malformed `USER_PASSWORDS` secret now produces a specific configuration error instead of looking like an incorrect password. The parser accepts the documented JSON object and also repairs the commonly pasted `"Name":"password"` form.
+- Existing session cookies are restored when the page opens, so refreshing no longer sends a signed-in user back to the login form.
+- A scanner that sends Enter adds its barcode immediately. With **Auto-add after scan** enabled, input is also submitted after a short pause without clicking a button. Multiple barcodes can be pasted one per line and added as a batch.
+- Quantity, markup, and final price are edited locally and saved on blur or Enter. This avoids an API request and complete table reload for every keystroke.
+- Completing a scan session creates or updates one selection per scanned style using the session customer, meeting date, final price, and cost snapshot. Re-completing the same session updates its linked selections rather than duplicating them.
