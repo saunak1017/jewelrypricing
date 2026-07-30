@@ -1,299 +1,87 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import * as XLSX from 'xlsx';
-import { Plus, Upload, Save, Trash2, Copy, RefreshCw, Search, Download, AlertTriangle, History, Gem, Calculator, Eye } from 'lucide-react';
+import { AlertTriangle, Calculator, Copy, Download, Eye, Gem, History, LogOut, Pencil, Plus, RefreshCw, Save, ScanLine, Trash2, Upload, Users } from 'lucide-react';
 import './styles.css';
 
-const blankStyle = {
-  factory: '', vendor_style_no: '', shivani_style_no: '', jewelry_category: '', metal_kt: '',
-  diamond_description: '', diamond_quality: '', stone_count: 0, cttw: 0,
-  net_wt_gms: 0, gold_loss_pct: 0, current_gold_lock: 0, gold_per_gram: 0,
-  merchandiser: '', image_filename: '', image_data_url: '', model_filename: '', model_data_url: '', model_mime_type: '', diamond_handling: 0, total_labor: 0, duty_pct: 7, tariff_pct: 11, pendant_chain: 0, earring_backs: 0, cad_fees: 0, margin_pct: 45, selling_price: 0, notes: ''
-};
-const blankComponent = () => ({ id: crypto.randomUUID(), shape: '', quality: '', color_clarity: '', each_weight: '', quantity: '', pricing_mode: 'auto', manual_unitcost: '', manual_total: '', notes: '' });
+const blankStyle={factory:'',vendor_style_no:'',shivani_style_no:'',jewelry_category:'',metal_kt:'',diamond_description:'',diamond_quality:'',stone_count:0,cttw:0,net_wt_gms:0,gold_loss_pct:0,current_gold_lock:0,gold_per_gram:0,merchandiser:'',image_filename:'',image_data_url:'',model_filename:'',model_data_url:'',model_mime_type:'',diamond_handling:0,total_labor:0,duty_pct:7,tariff_pct:11,pendant_chain:0,earring_backs:0,cad_fees:0,margin_pct:45,selling_price:0,notes:'',cost_source:'calculated'};
+const blankComponent=()=>({id:crypto.randomUUID(),shape:'',quality:'',color_clarity:'',each_weight:'',quantity:'',pricing_mode:'auto',manual_unitcost:'',manual_total:'',notes:''});
+const money=v=>Number(v||0).toLocaleString(undefined,{style:'currency',currency:'USD'}); const num=(v,d=2)=>Number(v||0).toLocaleString(undefined,{maximumFractionDigits:d}); const stamp=v=>v?new Date(v).toLocaleString():'—';
+const median=a=>{const n=a.map(Number).filter(x=>Number.isFinite(x)&&x>0).sort((x,y)=>x-y);return n.length?(n[Math.floor((n.length-1)/2)]+n[Math.ceil((n.length-1)/2)])/2:0};
+const qualityLabel=v=>String(v||'').split(/[\/,+&]/).map(x=>x.trim()).filter(Boolean).map(x=>({B:'G+/VS+',C:'G+/VS2-SI1',D:'G+/SI+',E:'G+/SI3+',I:'J-K/VS+',J:'J-K/SI+',BBL:'H-I/VS+',CBL:'H-I/VS2-SI1',DBL:'H-I/SI+'}[x.toUpperCase()]||x)).join(' / ');
 
-function money(v) { return Number(v || 0).toLocaleString(undefined, { style: 'currency', currency: 'USD' }); }
-function num(v, digits = 2) { return Number(v || 0).toLocaleString(undefined, { maximumFractionDigits: digits }); }
-function date(v) { return v ? new Date(v).toLocaleString() : '—'; }
-
-function App() {
-  const [password, setPassword] = useState(localStorage.getItem('jc_admin_password') || '');
-  const [authed, setAuthed] = useState(!!localStorage.getItem('jc_admin_password'));
-  const [view, setView] = useState('dashboard');
-  const [styles, setStyles] = useState([]);
-  const [activePricing, setActivePricing] = useState(null);
-  const [pricingUploads, setPricingUploads] = useState([]);
-  const [search, setSearch] = useState('');
-  const [currentId, setCurrentId] = useState(null);
-  const [style, setStyle] = useState(blankStyle);
-  const [components, setComponents] = useState([blankComponent()]);
-  const [calc, setCalc] = useState(null);
-  const [history, setHistory] = useState([]);
-  const [orders, setOrders] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [notice, setNotice] = useState('');
-
-  const headers = useMemo(() => ({ Authorization: `Bearer ${password}`, 'Content-Type': 'application/json' }), [password]);
-
-  async function api(path, opts = {}) {
-    const res = await fetch(path, { ...opts, headers: { Authorization: `Bearer ${password}`, ...(opts.body ? { 'Content-Type': 'application/json' } : {}) } });
-    const data = await res.json().catch(() => ({}));
-    if (res.status === 401) {
-      localStorage.removeItem('jc_admin_password');
-      setAuthed(false);
-      setNotice('Session expired or password is incorrect. Please log in again.');
-    }
-    if (!res.ok) throw new Error(data.error || `Request failed: ${res.status}`);
-    return data;
-  }
-
-  async function login(e) {
-    e?.preventDefault();
-    setLoading(true);
-    try {
-      const res = await fetch('/api/admin/init', { method: 'POST', headers });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || 'Login failed');
-      localStorage.setItem('jc_admin_password', password);
-      setAuthed(true);
-      await loadDashboard();
-    } catch (err) {
-      setNotice(err.message || 'Login failed');
-    } finally { setLoading(false); }
-  }
-
-  async function loadDashboard(q = search) {
-    setLoading(true);
-    try {
-      const data = await api(`/api/admin/styles${q ? `?q=${encodeURIComponent(q)}` : ''}`);
-      setStyles(data.styles || []);
-      setActivePricing(data.active_pricing_upload || null);
-      const pricing = await api('/api/admin/pricing');
-      setPricingUploads(pricing.uploads || []);
-    } catch (err) { setNotice(err.message); }
-    finally { setLoading(false); }
-  }
-
-  async function openStyle(id) {
-    setLoading(true); setCurrentId(id);
-    try {
-      if (id === 'new') {
-        setStyle(blankStyle); setComponents([blankComponent()]); setCalc(null); setHistory([]); setOrders([]); setView('editor');
-      } else {
-        const data = await api(`/api/admin/styles/${id}`);
-        setStyle(data.style); setComponents(data.components?.length ? data.components : [blankComponent()]); setCalc(data.calculation); setHistory(data.history || []); setOrders(data.orders || []); setView('detail');
-      }
-    } catch (err) { setNotice(err.message); }
-    finally { setLoading(false); }
-  }
-
-  async function saveStyle() {
-    setLoading(true);
-    try {
-      const data = await api(`/api/admin/styles/${currentId || 'new'}`, { method: 'POST', body: JSON.stringify({ style, components }) });
-      setCurrentId(data.id); setStyle(data.style); setComponents(data.components); setCalc(data.calculation); setNotice('Saved.');
-      await loadDashboard();
-    } catch (err) { setNotice(err.message); }
-    finally { setLoading(false); }
-  }
-
-
-  async function addOrder(order) {
-    if (!currentId || currentId === 'new') { setNotice('Save this style before logging orders.'); return; }
-    setLoading(true);
-    try {
-      const data = await api(`/api/admin/styles/${currentId}/orders`, { method: 'POST', body: JSON.stringify(order) });
-      setOrders([data.order, ...orders]);
-      setNotice('Order logged.');
-    } catch (err) { setNotice(err.message); }
-    finally { setLoading(false); }
-  }
-
-  function editCurrentStyle() { setView('editor'); }
-  async function archiveStyle(id) {
-    if (!confirm('Archive this style?')) return;
-    setLoading(true);
-    try { await api(`/api/admin/styles/${id}`, { method: 'DELETE' }); await loadDashboard(); }
-    catch (err) { setNotice(err.message); }
-    finally { setLoading(false); }
-  }
-
-  async function duplicateStyle(id) {
-    setLoading(true);
-    try { const data = await api(`/api/admin/styles/${id}/duplicate`, { method: 'POST' }); await loadDashboard(); await openStyle(data.id); }
-    catch (err) { setNotice(err.message); }
-    finally { setLoading(false); }
-  }
-
-  async function uploadPricing(file) {
-    if (!file) return;
-    setLoading(true);
-    try {
-      const arrayBuffer = await file.arrayBuffer();
-      const wb = XLSX.read(arrayBuffer);
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
-      const cleaned = rows.map(r => ({
-        interchange_shape: r.interchange_shape ?? r.Interchange_Shape ?? r.Shape ?? r.shape ?? '',
-        Quality: r.Quality ?? r.quality ?? '',
-        'Color/Clarity': r['Color/Clarity'] ?? r.ColorClarity ?? r.color_clarity ?? '',
-        interchange_minweight: Number(r.interchange_minweight ?? r.MinWeight ?? r.min ?? 0),
-        interchange_maxweight: Number(r.interchange_maxweight ?? r.MaxWeight ?? r.max ?? 0),
-        size: r.size ?? r.Size ?? '',
-        interchange_unitcost: Number(String(r.interchange_unitcost ?? r.UnitCost ?? r['$/ct'] ?? 0).replace(/[$,]/g, ''))
-      })).filter(r => r.interchange_shape && r.Quality && r.interchange_maxweight !== 0);
-      if (!cleaned.length) throw new Error('No valid rows found. Check that the first sheet has the expected diamond pricing headers.');
-      const ok = confirm(`Upload ${cleaned.length} pricing rows and make this the active master list? This will snapshot current style costs first.`);
-      if (!ok) return;
-      await api('/api/admin/pricing', { method: 'POST', body: JSON.stringify({ filename: file.name, rows: cleaned }) });
-      setNotice(`Uploaded ${cleaned.length} pricing rows and made them active.`);
-      await loadDashboard();
-      if (currentId && currentId !== 'new') await openStyle(currentId);
-    } catch (err) { setNotice(err.message); }
-    finally { setLoading(false); }
-  }
-
-  async function exportCurrent() {
-    setLoading(true);
-    try {
-      const data = await api('/api/admin/export');
-      const ws = XLSX.utils.json_to_sheet(data.rows || []);
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, 'Current Costing');
-      XLSX.writeFile(wb, `jewelry-current-costing-${new Date().toISOString().slice(0,10)}.xlsx`);
-    } catch (err) { setNotice(err.message); }
-    finally { setLoading(false); }
-  }
-
-  useEffect(() => { if (authed) loadDashboard(); }, [authed]);
-
-  if (!authed) return <Login password={password} setPassword={setPassword} login={login} loading={loading} notice={notice} />;
-
-  return <div className="app">
-    <aside>
-      <div className="brand"><Gem size={26}/><div><b>Jewelry Costing</b><span>Dynamic style calculator</span></div></div>
-      <button className={view==='dashboard'?'active':''} onClick={() => { setView('dashboard'); loadDashboard(); }}><Calculator size={18}/> Dashboard</button>
-      <button onClick={() => openStyle('new')}><Plus size={18}/> New Style</button>
-      <label className="uploadBtn"><Upload size={18}/> Upload Diamond Pricing<input type="file" accept=".xlsx,.xls,.csv" onChange={e => uploadPricing(e.target.files[0])}/></label>
-      <button onClick={exportCurrent}><Download size={18}/> Export Current Excel</button>
-      <div className="sideCard">
-        <span>Active pricing</span>
-        <b>{activePricing ? date(activePricing.uploaded_at) : 'No file uploaded'}</b>
-        {activePricing && <small>{activePricing.filename} · {activePricing.row_count} rows</small>}
-      </div>
-      <button className="ghost" onClick={() => { localStorage.removeItem('jc_admin_password'); location.reload(); }}>Log out</button>
-    </aside>
-
-    <main>
-      {notice && <div className="notice" onClick={() => setNotice('')}>{notice}</div>}
-      {loading && <div className="loading"><RefreshCw className="spin" size={16}/> Working...</div>}
-      {view === 'dashboard' ? <Dashboard styles={styles} search={search} setSearch={setSearch} loadDashboard={loadDashboard} openStyle={openStyle} archiveStyle={archiveStyle} duplicateStyle={duplicateStyle} pricingUploads={pricingUploads}/> :
-        view === 'detail' ? <StyleDetail style={style} components={components} calc={calc} orders={orders} addOrder={addOrder} editStyle={editCurrentStyle} goBack={() => { setView('dashboard'); loadDashboard(); }} history={history}/> :
-        <Editor style={style} setStyle={setStyle} components={components} setComponents={setComponents} calc={calc} saveStyle={saveStyle} goBack={() => { currentId && currentId !== 'new' ? setView('detail') : setView('dashboard'); loadDashboard(); }} history={history}/>
-      }
-    </main>
-  </div>;
+function App(){
+ const [user,setUser]=useState(null),[view,setView]=useState('dashboard'),[styles,setStyles]=useState([]),[activePricing,setActivePricing]=useState(null),[barcodeInfo,setBarcodeInfo]=useState({}),[search,setSearch]=useState(''),[notice,setNotice]=useState(''),[loading,setLoading]=useState(false),[current,setCurrent]=useState(null),[scanSession,setScanSession]=useState(null),[scanSessions,setScanSessions]=useState([]),[authChecked,setAuthChecked]=useState(false);
+ async function api(path,opts={}){const res=await fetch(path,{...opts,credentials:'include',headers:{...(opts.body?{'Content-Type':'application/json'}:{}),...opts.headers}});const data=await res.json().catch(()=>({}));if(res.status===401)setUser(null);if(!res.ok){const e=new Error(data.error||`Request failed: ${res.status}`);e.status=res.status;e.data=data;throw e}return data}
+ async function load(){setLoading(true);try{const [d,b,s]=await Promise.all([api(`/api/admin/styles${search?`?q=${encodeURIComponent(search)}`:''}`),api('/api/admin/barcodes'),api('/api/admin/scans')]);setStyles(d.styles||[]);setActivePricing(d.active_pricing_upload);setBarcodeInfo(b);setScanSessions(s.sessions||[])}catch(e){setNotice(e.message)}finally{setLoading(false)}}
+ useEffect(()=>{api('/api/admin/init').then(d=>setUser(d.user)).catch(()=>setUser(null)).finally(()=>setAuthChecked(true))},[]);
+ useEffect(()=>{if(user)load()},[user]);
+ async function login(password){setLoading(true);try{const d=await api('/api/admin/init',{method:'POST',body:JSON.stringify({password})});setUser(d.user);setAuthChecked(true);setNotice('Welcome.')}catch(e){setNotice(e.message)}finally{setLoading(false)}}
+ async function logout(){await api('/api/admin/init',{method:'DELETE'}).catch(()=>{});setUser(null)}
+ async function openStyle(id){setLoading(true);try{if(id==='new')setCurrent({id:'new',style:{...blankStyle},components:[blankComponent()],orders:[],selections:[],history:[],calculation:null});else setCurrent({id,...await api(`/api/admin/styles/${id}`)});setView('style')}catch(e){setNotice(e.message)}finally{setLoading(false)}}
+ async function saveStyle(style,components){const d=await api(`/api/admin/styles/${current.id}`,{method:'POST',body:JSON.stringify({style,components})});setCurrent(c=>({...c,id:d.id,style:d.style,components:d.components,calculation:d.calculation}));setNotice('Style saved.');await load()}
+ async function archive(id){if(!confirm('Archive this style?'))return;await api(`/api/admin/styles/${id}`,{method:'DELETE'});setNotice('Style archived.');load()}
+ async function duplicate(id){const d=await api(`/api/admin/styles/${id}/duplicate`,{method:'POST'});openStyle(d.id)}
+ async function openScan(id){const d=await api(`/api/admin/scans?id=${encodeURIComponent(id)}`);setScanSession(d.session);setView('scanner')}
+ async function uploadPricing(f){try{const wb=XLSX.read(await f.arrayBuffer(),{type:'array'}),raw=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:''});const pick=(r,...names)=>{const k=Object.keys(r).find(x=>names.includes(x.trim().toLowerCase()));return k?r[k]:''};const rows=raw.map(r=>({interchange_shape:pick(r,'interchange_shape','shape'),quality:pick(r,'quality'),color_clarity:pick(r,'color/clarity','color_clarity'),interchange_minweight:pick(r,'interchange_minweight','min weight'),interchange_maxweight:pick(r,'interchange_maxweight','max weight'),size:pick(r,'size'),interchange_unitcost:pick(r,'interchange_unitcost','unit cost','$ / ct')})).filter(r=>r.interchange_shape&&r.quality);if(!rows.length)throw new Error('No valid diamond pricing rows found.');if(!confirm(`Activate ${rows.length} diamond pricing rows?`))return;await api('/api/admin/pricing',{method:'POST',body:JSON.stringify({filename:f.name,rows})});setNotice('Diamond pricing activated.');load()}catch(e){setNotice(e.message)}}
+ async function exportCurrent(){try{const d=await api('/api/admin/export'),ws=XLSX.utils.json_to_sheet(d.rows||[]),wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Current Pricing');XLSX.writeFile(wb,'jewelry-current-pricing.xlsx')}catch(e){setNotice(e.message)}}
+ if(!authChecked)return <div className="loginPage"><div className="loginBox"><RefreshCw className="spin"/><p>Checking your session…</p></div></div>;
+ if(!user)return <Login login={login} loading={loading} notice={notice}/>;
+ return <div className="app"><aside><div className="brand"><Gem/><div><b>Jewelry Costing</b><span>Pricing & sales workspace</span></div></div><button className={view==='dashboard'?'active':''} onClick={()=>{setView('dashboard');load()}}><Calculator/> Dashboard</button><button onClick={()=>openStyle('new')}><Plus/> New Style</button><button className={view==='import'?'active':''} onClick={()=>setView('import')}><Upload/> Import Existing Styles</button><button className={view==='scans'?'active':''} onClick={()=>setView('scans')}><ScanLine/> Scan Pieces</button><button className={view==='activity'?'active':''} onClick={()=>setView('activity')}><Users/> Activity Log</button><label className="uploadBtn"><Upload/> Upload Diamond Pricing<input type="file" accept=".xlsx,.xls,.csv" onChange={e=>e.target.files[0]&&uploadPricing(e.target.files[0])}/></label><button onClick={exportCurrent}><Download/> Export Current Excel</button><div className="sideCard"><span>Signed in as</span><b>{user.name}</b><small>{activePricing?`Pricing: ${activePricing.filename}`:'No diamond pricing active'}</small><small>{barcodeInfo.active?`Barcodes: ${barcodeInfo.active.filename}`:'No barcode master'}</small></div><button className="ghost" onClick={logout}><LogOut/> Log out</button></aside><main>{notice&&<div className="notice" onClick={()=>setNotice('')}>{notice}</div>}{loading&&<div className="loading"><RefreshCw className="spin"/> Working…</div>}{view==='dashboard'&&<Dashboard {...{styles,search,setSearch,load,openStyle,archive,duplicate}}/>}{view==='style'&&current&&<StyleWorkspace data={current} api={api} saveStyle={saveStyle} refresh={()=>openStyle(current.id)} back={()=>{setView('dashboard');load()}} setNotice={setNotice}/>} {view==='import'&&<ImportStyles api={api} done={()=>{setView('dashboard');load()}} setNotice={setNotice}/>} {view==='scans'&&<ScanHome api={api} sessions={scanSessions} refresh={load} openScan={openScan} setNotice={setNotice}/>} {view==='scanner'&&scanSession&&<Scanner api={api} session={scanSession} setSession={setScanSession} back={()=>{setView('scans');load()}} setNotice={setNotice}/>} {view==='activity'&&<ActivityLog api={api} setNotice={setNotice}/>}</main></div>
 }
-
-function Login({ password, setPassword, login, loading, notice }) {
-  return <div className="loginPage"><form className="loginBox" onSubmit={login}>
-    <Gem size={42}/><h1>Jewelry Costing</h1><p>Enter the admin password to continue.</p>
-    <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Admin password" autoFocus />
-    <button disabled={loading}>{loading ? 'Opening...' : 'Open Admin'}</button>
-    {notice && <div className="error">{notice}</div>}
-    <small>Default is admin123 until you set ADMIN_PASSWORD in Cloudflare Pages environment variables.</small>
-  </form></div>;
+function Login({login,loading,notice}){const[p,setP]=useState('');return <div className="loginPage"><form className="loginBox" onSubmit={e=>{e.preventDefault();login(p)}}><Gem size={44}/><h1>Jewelry Costing</h1><p>Enter your personal password.</p><input type="password" value={p} onChange={e=>setP(e.target.value)} autoFocus/><button disabled={loading}>{loading?'Opening…':'Sign in'}</button>{notice&&<div className="error">{notice}</div>}</form></div>}
+function Dashboard({styles,search,setSearch,load,openStyle,archive,duplicate}){return <section><div className="topbar"><div><h1>Styles</h1><p>Imported legacy totals remain fixed until intentionally switched to calculated costs.</p></div><button onClick={()=>openStyle('new')}><Plus/> New Style</button></div><div className="search"><input value={search} onChange={e=>setSearch(e.target.value)} onKeyDown={e=>e.key==='Enter'&&load()} placeholder="Search style, vendor, factory, category…"/><button onClick={load}>Search</button></div><div className="tableWrap"><table><thead><tr><th>Style</th><th>Vendor</th><th>Category</th><th>Metal</th><th>CTTW</th><th>Diamond</th><th>Export</th><th>Import</th><th>Cost source</th><th/></tr></thead><tbody>{styles.map(s=><tr key={s.id}><td><button className="linkBtn" onClick={()=>openStyle(s.id)}>{s.shivani_style_no||'Untitled'}</button><small>{s.factory}</small></td><td>{s.vendor_style_no}</td><td>{s.jewelry_category}</td><td>{s.metal_kt}</td><td>{num(s.current?.cttw)}</td><td>{money(s.current?.total_diamond_cost)}</td><td>{money(s.current?.total_export_cost)}</td><td><b>{money(s.current?.total_import_cost)}</b></td><td><span className={`badge ${s.cost_source==='imported'?'amber':'green'}`}>{s.cost_source==='imported'?'Imported legacy':'Calculated'}</span></td><td className="actions"><button onClick={()=>openStyle(s.id)}><Eye/></button><button onClick={()=>duplicate(s.id)}><Copy/></button><button onClick={()=>archive(s.id)}><Trash2/></button></td></tr>)}{!styles.length&&<tr><td colSpan="10" className="empty">No styles found.</td></tr>}</tbody></table></div></section>}
+function StyleWorkspace({data,api,saveStyle,refresh,back,setNotice}){const[editing,setEditing]=useState(data.id==='new'),[style,setStyle]=useState(data.style),[components,setComponents]=useState(data.components?.length?data.components:[blankComponent()]);useEffect(()=>{setStyle(data.style);setComponents(data.components?.length?data.components:[blankComponent()])},[data]);if(editing)return <Editor {...{style,setStyle,components,setComponents}} calc={data.calculation} save={()=>saveStyle(style,components)} back={()=>data.id==='new'?back():setEditing(false)}/>;return <StyleDetail data={data} api={api} edit={()=>setEditing(true)} refresh={refresh} back={back} setNotice={setNotice}/>}
+function StyleDetail({data,api,edit,refresh,back,setNotice}){const{style,calculation,components,orders=[],selections=[],history=[]}=data;const totals=calculation?.totals||{};const[selectedTab,setSelectedTab]=useState('selections');async function convert(){if(!confirm('Switch this style permanently to calculated costs? Imported totals will be saved in history.'))return;try{await api(`/api/admin/styles/${data.id}/calculate`,{method:'POST'});setNotice('Style now uses calculated costs.');refresh()}catch(e){setNotice(e.message)}}return <section><div className="topbar"><div><h1>{style.shivani_style_no||'Untitled'}</h1><p>Style details, selling activity, assets, and pricing history.</p></div><div className="row"><button className="secondary" onClick={back}>Back</button><button onClick={edit}><Pencil/> Edit Style</button></div></div>{style.cost_source==='imported'&&<div className="legacyBanner"><div><b>Imported legacy costs are active</b><span>The summary uses exact workbook totals. You can add components without changing them.</span></div><button onClick={convert}>Switch to Calculated Costs</button></div>}<div className="editorGrid"><div className="panel"><h2>Style Details</h2>{style.image_data_url&&<img className="stylePhoto" src={style.image_data_url}/>}<div className="detailGrid"><Detail label="Vendor" value={style.factory}/><Detail label="Vendor Style" value={style.vendor_style_no}/><Detail label="Category" value={style.jewelry_category}/><Detail label="Metal" value={style.metal_kt}/><Detail label="Diamond Quality" value={style.diamond_quality}/><Detail label="Description" value={style.diamond_description}/><Detail label="CTTW" value={totals.cttw}/><Detail label="Merchandiser" value={style.merchandiser}/></div></div><CostSummary totals={totals}/></div><div className="tabs"><button className={selectedTab==='selections'?'active':''} onClick={()=>setSelectedTab('selections')}>Selections ({selections.length})</button><button className={selectedTab==='orders'?'active':''} onClick={()=>setSelectedTab('orders')}>Orders ({orders.length})</button></div>{selectedTab==='selections'?<Activity type="selection" records={selections} styleId={data.id} api={api} refresh={refresh} setNotice={setNotice}/>:<Activity type="order" records={orders} styleId={data.id} api={api} refresh={refresh} setNotice={setNotice}/>}<div className="panel"><h2>Diamond Components</h2><table><thead><tr><th>Shape</th><th>Quality</th><th>Each Wt</th><th>Qty</th><th>Total</th></tr></thead><tbody>{components.map((c,i)=><tr key={c.id||i}><td>{c.shape}</td><td>{c.quality}</td><td>{c.each_weight}</td><td>{c.quantity}</td><td>{money(calculation?.components?.[i]?.line_total)}</td></tr>)}</tbody></table></div><div className="panel"><h2><History/> Cost History</h2><table><thead><tr><th>Date</th><th>Reason</th><th>Export</th><th>Duty</th><th>Tariff</th><th>Import</th></tr></thead><tbody>{history.map(h=><tr key={h.id}><td>{stamp(h.snapshot_at)}</td><td>{h.reason}</td><td>{money(h.total_export_cost)}</td><td>{money(h.duty)}</td><td>{money(h.tariff)}</td><td>{money(h.total_import_cost)}</td></tr>)}</tbody></table></div></section>}
+function Activity({type,records,styleId,api,refresh,setNotice}){const isSelection=type==='selection';const blank=isSelection?{customer:'',meeting_date:new Date().toISOString().slice(0,10),proposed_price:'',buying_group:'',modifications:false,status:'complete'}:{customer:'',order_date:new Date().toISOString().slice(0,10),quantity:'',price:'',buying_group:'',memo_or_asset:'Memo',status:'complete'};const[form,setForm]=useState(blank),[editId,setEditId]=useState(null);const prices=records.map(r=>Number(isSelection?r.proposed_price:r.price)).filter(Boolean),base=median(prices);const change=(k,v)=>setForm(f=>({...f,[k]:v}));function edit(r){setEditId(r.id);setForm({...r,modifications:!!r.modifications})}async function submit(e){e.preventDefault();try{await api(`/api/admin/styles/${styleId}/${isSelection?'selections':'orders'}`,{method:editId?'PUT':'POST',body:JSON.stringify({...form,id:editId})});setForm(blank);setEditId(null);refresh()}catch(e){setNotice(e.message)}}async function remove(id){if(!confirm(`Delete this ${type}? The action will remain in the audit log.`))return;await api(`/api/admin/styles/${styleId}/${isSelection?'selections':'orders'}?${type}_id=${id}`,{method:'DELETE'});refresh()}return <><div className="panel"><div className="sectionHead"><h2>{editId?'Edit':'Log'} {isSelection?'Selection':'Order'}</h2>{editId&&<button className="secondary" onClick={()=>{setEditId(null);setForm(blank)}}>Cancel</button>}</div><form className="orderForm" onSubmit={submit}><Field label="Customer" value={form.customer} onChange={v=>change('customer',v)}/><Field type="date" label={isSelection?'Meeting Date':'Order Date'} value={form[isSelection?'meeting_date':'order_date']} onChange={v=>change(isSelection?'meeting_date':'order_date',v)}/>{isSelection?<><Field type="number" label="Proposed Price $" value={form.proposed_price} onChange={v=>change('proposed_price',v)}/><Check label="Modifications" value={form.modifications} onChange={v=>change('modifications',v)}/></>:<><Field type="number" label="Quantity" value={form.quantity} onChange={v=>change('quantity',v)}/><Field type="number" label="Price $" value={form.price} onChange={v=>change('price',v)}/><SelectField label="Memo or Asset" value={form.memo_or_asset} onChange={v=>change('memo_or_asset',v)} options={['Memo','Asset']}/></>}<SelectField label="Buying Group" value={form.buying_group} onChange={v=>change('buying_group',v)} options={['','RJO','LJG','CBG','AGS','Other']}/><button><Save/> {editId?'Save Changes':`Log ${isSelection?'Selection':'Order'}`}</button></form></div><div className="panel"><h2>{isSelection?'Selections':'Orders'}</h2><div className="tableWrap"><table><thead><tr><th>Customer</th><th>Date</th>{!isSelection&&<th>Qty</th>}<th>Price</th><th>Profit $</th><th>Markup %</th><th>Margin %</th><th>Variance</th><th>Group</th>{isSelection&&<th>Modified</th>}<th>By</th><th/></tr></thead><tbody>{records.map(r=>{const price=Number(isSelection?r.proposed_price:r.price),cost=Number(r.cost_snapshot),profit=price-cost,variance=base?((price-base)/base)*100:0;return <tr key={r.id} className={r.status==='draft'?'draftRow':''}><td>{r.customer}<small>{r.status==='draft'?'Draft import':''}</small></td><td>{r[isSelection?'meeting_date':'order_date']||'—'}</td>{!isSelection&&<td>{r.quantity}</td>}<td>{money(price)}</td><td>{money(profit)}</td><td>{cost?num(profit/cost*100)+'%':'—'}</td><td>{price?num(profit/price*100)+'%':'—'}</td><td className={Math.abs(variance)>5?'variance':''}>{base?`${variance>0?'+':''}${num(variance)}%`:'—'}</td><td>{r.buying_group||'—'}</td>{isSelection&&<td>{r.modifications?'Yes':'No'}</td>}<td>{r.updated_by_name||r.created_by_name||'Import'}</td><td className="actions"><button onClick={()=>edit(r)}><Pencil/></button><button onClick={()=>remove(r.id)}><Trash2/></button></td></tr>})}{!records.length&&<tr><td className="empty" colSpan="12">None logged yet.</td></tr>}</tbody></table></div></div></>}
+function Editor({style,setStyle,components,setComponents,calc,save,back}){const update=(k,v)=>setStyle(s=>({...s,[k]:v})),comp=(i,k,v)=>setComponents(cs=>cs.map((c,x)=>x===i?{...c,[k]:v}:c));const local=useMemo(()=>{const diamond=components.reduce((sum,c)=>{const ctw=Number(c.each_weight||0)*Number(c.quantity||0);return sum+(c.pricing_mode==='manual_total'?Number(c.manual_total||0):c.pricing_mode==='manual_unit'?ctw*Number(c.manual_unitcost||0):0)},0),metal=Number(style.net_wt_gms)*Number(style.gold_per_gram),exportCost=metal+diamond+Number(style.diamond_handling)+Number(style.total_labor),duty=exportCost*Number(style.duty_pct)/100,tariff=(exportCost+duty)*Number(style.tariff_pct)/100,findings=Number(style.pendant_chain)+Number(style.earring_backs)+Number(style.cad_fees),importCost=exportCost+duty+tariff+findings;return{total_metal_cost:metal,total_diamond_cost:diamond,total_export_cost:exportCost,duty,tariff,total_import_cost:importCost,cttw:components.reduce((s,c)=>s+Number(c.each_weight)*Number(c.quantity),0)}},[style,components]);const totals=style.cost_source==='imported'?(calc?.totals||local):(calc?.totals||local);return <section><div className="topbar"><div><h1>{style.shivani_style_no||'New Style'}</h1><p>{style.cost_source==='imported'?'Editing inputs will not replace imported totals until you switch cost source.':'Costs recalculate from these inputs.'}</p></div><div className="row"><button className="secondary" onClick={back}>Back</button><button onClick={save}><Save/> Save & Recalculate</button></div></div><div className="editorGrid"><div className="panel"><h2>Style Information</h2><div className="grid2"><Field label="Vendor Name" value={style.factory} onChange={v=>update('factory',v)}/><Field label="Vendor Style No" value={style.vendor_style_no} onChange={v=>update('vendor_style_no',v)}/><Field label="Shivani Style Number" value={style.shivani_style_no} onChange={v=>update('shivani_style_no',v)}/><Field label="Jewelry Category" value={style.jewelry_category} onChange={v=>update('jewelry_category',v)}/><Field label="Metal KT" value={style.metal_kt} onChange={v=>update('metal_kt',v)}/><Field label="Diamond Quality" value={style.diamond_quality} onChange={v=>update('diamond_quality',v)}/><Field label="Merchandiser" value={style.merchandiser} onChange={v=>update('merchandiser',v)}/></div><Field label="Diamond Description" value={style.diamond_description} onChange={v=>update('diamond_description',v)}/><Field label="Notes" textarea value={style.notes} onChange={v=>update('notes',v)}/><div className="grid2"><FileField label="Style Picture" accept="image/*" filename={style.image_filename} onFile={(f,d)=>setStyle(s=>({...s,image_filename:f.name,image_data_url:d}))}/><FileField label="CAD / 3D File" accept=".stl,.3dm,.glb" filename={style.model_filename} onFile={(f,d)=>setStyle(s=>({...s,model_filename:f.name,model_data_url:d,model_mime_type:f.type}))}/></div></div><CostSummary totals={totals}/></div><div className="panel"><h2>Gold / Metal</h2><div className="grid4"><Field type="number" label="Net wt. in gms" value={style.net_wt_gms} onChange={v=>update('net_wt_gms',v)}/><Field type="number" label="Gold Loss % (reference only)" value={style.gold_loss_pct} onChange={v=>update('gold_loss_pct',v)}/><Field type="number" label="Current Gold Lock" value={style.current_gold_lock} onChange={v=>update('current_gold_lock',v)}/><Field type="number" label="Gold per Gram $" value={style.gold_per_gram} onChange={v=>update('gold_per_gram',v)}/></div></div><div className="panel"><div className="sectionHead"><h2>Diamond Components</h2><button onClick={()=>setComponents(c=>[...c,blankComponent()])}><Plus/> Add Stone Line</button></div><div className="componentTable"><table><thead><tr><th>Shape</th><th>Quality</th><th>Each Wt</th><th>Qty</th><th>Mode</th><th>Manual $/ct</th><th>Manual Total</th><th/></tr></thead><tbody>{components.map((c,i)=><tr key={c.id}><td><input value={c.shape} onChange={e=>comp(i,'shape',e.target.value)}/></td><td><input value={c.quality} onChange={e=>comp(i,'quality',e.target.value)}/></td><td><input type="number" value={c.each_weight} onChange={e=>comp(i,'each_weight',e.target.value)}/></td><td><input type="number" value={c.quantity} onChange={e=>comp(i,'quantity',e.target.value)}/></td><td><select value={c.pricing_mode} onChange={e=>comp(i,'pricing_mode',e.target.value)}><option value="auto">Auto</option><option value="manual_unit">Manual $/ct</option><option value="manual_total">Manual total</option></select></td><td><input type="number" value={c.manual_unitcost} onChange={e=>comp(i,'manual_unitcost',e.target.value)}/></td><td><input type="number" value={c.manual_total} onChange={e=>comp(i,'manual_total',e.target.value)}/></td><td><button onClick={()=>setComponents(cs=>cs.filter((_,x)=>x!==i))}><Trash2/></button></td></tr>)}</tbody></table></div></div><div className="panel"><h2>Other Costs / Import</h2><div className="grid4"><Field type="number" label="Diamond Handling" value={style.diamond_handling} onChange={v=>update('diamond_handling',v)}/><Field type="number" label="Total Labor" value={style.total_labor} onChange={v=>update('total_labor',v)}/><Field type="number" label="Duty %" value={style.duty_pct} onChange={v=>update('duty_pct',v)}/><Field type="number" label="Tariff %" value={style.tariff_pct} onChange={v=>update('tariff_pct',v)}/></div><h2>Findings / Other Fees</h2><div className="grid4"><Field type="number" label="Pendant Chain" value={style.pendant_chain} onChange={v=>update('pendant_chain',v)}/><Field type="number" label="Earring Backs" value={style.earring_backs} onChange={v=>update('earring_backs',v)}/><Field type="number" label="CAD Fees" value={style.cad_fees} onChange={v=>update('cad_fees',v)}/></div></div><div className="panel"><h2>Markup Calculator</h2><div className="grid4"><Field type="number" label="Markup %" value={style.margin_pct} onChange={v=>update('margin_pct',v)}/><Summary label="Suggested Price" value={Number(totals.total_import_cost||0)*(1+Number(style.margin_pct||0)/100)}/><Field type="number" label="Final Selling Price" value={style.selling_price} onChange={v=>update('selling_price',v)}/></div></div></section>}
+function ImportStyles({api,done,setNotice}){const[file,setFile]=useState(null),[groups,setGroups]=useState([]),[resolved,setResolved]=useState({}),[step,setStep]=useState('choose');const aliases={customer:['Customer'],factory:['Factory'],vendor_style_no:['Vendor Style No'],shivani_style_no:['Shivani Style#','Shivani Style Number'],jewelry_category:['Jewelry Category'],metal_kt:['Metal KT'],diamond_description:['Diamond Description'],diamond_quality:['Diamond Quality'],stone_count:['# of Stones'],cttw:['CTTW'],net_wt_gms:['Net wt. in gms.','Net wt. in gms'],gold_loss_pct:['Gold Loss'],current_gold_lock:['Current Gold lock','Current Gold Lock'],gold_per_gram:['Gold per Gram $'],total_metal_cost:['Tot Metal Cost','Metal Cost'],total_diamond_cost:['Total Dia Cost','Diamond Cost'],diamond_handling:['Diamond Handling'],total_labor:['Total Labor'],total_export_cost:['Total Export Cost','Total Export Cost '],duty:['Duty 7%','Duty'],tariff:['Tariff 11%','Tariff'],total_import_cost:['Total Import Cost'],merchandiser:['Merchandiser']};const val=(r,names)=>{const key=Object.keys(r).find(k=>names.some(n=>k.trim().toLowerCase()===n.toLowerCase()));return key?r[key]:''};async function read(f){setFile(f);const wb=XLSX.read(await f.arrayBuffer(),{type:'array'}),raw=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:''});const mapped=raw.map((r,i)=>Object.fromEntries([['__row',i+2],...Object.entries(aliases).map(([k,n])=>[k,val(r,n)])])).filter(r=>String(r.shivani_style_no).trim());const map=new Map();for(const r of mapped){const key=String(r.shivani_style_no).trim().toUpperCase();if(!map.has(key))map.set(key,[]);map.get(key).push(r)}const gs=[...map.entries()].map(([key,rows])=>{const fields=Object.keys(aliases).filter(k=>k!=='customer'),conflicts=fields.filter(k=>new Set(rows.map(r=>String(r[k]).trim())).size>1);return{key,rows,conflicts,customers:[...new Set(rows.map(r=>String(r.customer).trim()).filter(Boolean))]}});setGroups(gs);setResolved(Object.fromEntries(gs.map(g=>[g.key,0])));setStep('review')}
+ async function submit(){const unresolved=groups.filter(g=>g.conflicts.length&&!Number.isInteger(resolved[g.key]));if(unresolved.length)return setNotice('Resolve every conflicting style first.');const rows=groups.map(g=>({...g.rows[resolved[g.key]??0],customers:g.customers}));try{const d=await api('/api/admin/style-imports',{method:'POST',body:JSON.stringify({filename:file.name,rows})});setNotice(`Import complete: ${d.created} created, ${d.updated} updated, ${d.selections} draft selections.`);done()}catch(e){setNotice(e.message)}}return <section><div className="topbar"><div><h1>Import Existing Styles</h1><p>Review duplicates and conflicts before legacy costs or draft selections are saved.</p></div></div>{step==='choose'?<div className="panel uploadDrop"><Upload size={40}/><h2>Select the legacy pricing workbook</h2><p>Accepts .xlsx, .xls, and .csv. Shivani Style# is the unique identity.</p><input type="file" accept=".xlsx,.xls,.csv" onChange={e=>e.target.files[0]&&read(e.target.files[0])}/></div>:<><div className="statGrid"><div><b>{groups.length}</b><span>Unique styles</span></div><div><b>{groups.filter(g=>g.rows.length>1).length}</b><span>Duplicate groups</span></div><div><b>{groups.filter(g=>g.conflicts.length).length}</b><span>Conflicts to review</span></div></div>{groups.filter(g=>g.rows.length>1).map(g=><div className={`panel conflict ${g.conflicts.length?'hasConflict':''}`} key={g.key}><h3>{g.key} <span>{g.rows.length} rows</span></h3><p>{g.conflicts.length?`Differences: ${g.conflicts.join(', ')}`:'Exact duplicates will be imported once.'}</p><p>Selections: {g.customers.join(', ')||'None'}</p>{g.conflicts.length&&<div className="choices">{g.rows.map((r,i)=><label key={i}><input type="radio" name={g.key} checked={resolved[g.key]===i} onChange={()=>setResolved(x=>({...x,[g.key]:i}))}/><b>Use row {r.__row}</b><small>{g.conflicts.map(k=>`${k}: ${r[k]}`).join(' · ')}</small></label>)}</div>}</div>)}<div className="actionBar"><button className="secondary" onClick={()=>setStep('choose')}>Choose another file</button><button onClick={submit}><Upload/> Import {groups.length} Styles</button></div></>}</section>}
+function ScanHome({api,sessions,refresh,openScan,setNotice}){const[form,setForm]=useState({name:'',customer:'',mode:'costing',default_markup:45});async function create(e){e.preventDefault();try{const d=await api('/api/admin/scans',{method:'POST',body:JSON.stringify(form)});openScan(d.session.id)}catch(e){setNotice(e.message)}}async function upload(f){try{const wb=XLSX.read(await f.arrayBuffer(),{type:'array'}),raw=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:'',raw:false});if(!raw.length)throw new Error('The barcode workbook is empty.');const keys=Object.keys(raw[0]),barcodeKey=keys.find(k=>/^(barcode|barcode number|barcode #|upc)$/i.test(k.trim())),styleKey=keys.find(k=>/^(style|style number|style #|shivani style|shivani style number)$/i.test(k.trim()));if(!barcodeKey||!styleKey)throw new Error(`Expected Column A “Style Number” and Column B “Barcode”. Found: ${keys.join(', ')}`);const rows=raw.map(r=>({barcode:String(r[barcodeKey]).trim(),style_no:String(r[styleKey]).trim()}));const d=await api('/api/admin/barcodes',{method:'POST',body:JSON.stringify({filename:f.name,rows})});setNotice(`Barcode master saved with ${d.row_count} mappings.`);refresh()}catch(e){setNotice(e.message)}}return <section><div className="topbar"><div><h1>Scan Pieces</h1><p>Create a saved selection session or update the persistent barcode master.</p></div><label className="buttonLabel"><Upload/> Upload Barcode Master<input type="file" accept=".xlsx,.xls,.csv" onChange={e=>e.target.files[0]&&upload(e.target.files[0])}/></label></div><div className="panel"><h2>New Scan Session</h2><form className="orderForm" onSubmit={create}><Field label="Session Name" value={form.name} onChange={v=>setForm(x=>({...x,name:v}))}/><Field label="Customer" value={form.customer} onChange={v=>setForm(x=>({...x,customer:v}))}/><SelectField label="Mode" value={form.mode} onChange={v=>setForm(x=>({...x,mode:v}))} options={[['costing','Costing Mode'],['presentation','Presentation Mode']]}/><Field type="number" label="Default Markup %" value={form.default_markup} onChange={v=>setForm(x=>({...x,default_markup:v}))}/><button><ScanLine/> Start Scanning</button></form></div><div className="panel"><h2>Saved Sessions</h2><table><thead><tr><th>Name</th><th>Customer</th><th>Mode</th><th>Pieces</th><th>Created by</th><th>Updated</th><th/></tr></thead><tbody>{sessions.map(s=><tr key={s.id}><td>{s.name}</td><td>{s.customer||'—'}</td><td>{s.mode==='presentation'?'Presentation':'Costing'}</td><td>{s.item_count}</td><td>{s.created_by_name||'—'}</td><td>{stamp(s.updated_at)}</td><td><button onClick={()=>openScan(s.id)}>Open</button></td></tr>)}</tbody></table></div></section>}
+function Scanner({api,session,setSession,back,setNotice}){
+ const[barcode,setBarcode]=useState(''),[bulk,setBulk]=useState(''),[confirmations,setConfirmations]=useState([]),[autoAdd,setAutoAdd]=useState(true),[meetingDate,setMeetingDate]=useState(new Date().toISOString().slice(0,10)),[edits,setEdits]=useState({});
+ const input=useRef(),timer=useRef(),queue=useRef([]),processing=useRef(false);
+ const reload=async()=>setSession((await api(`/api/admin/scans?id=${session.id}`)).session);
+ useEffect(()=>()=>clearTimeout(timer.current),[]);
+ useEffect(()=>{input.current?.focus()},[]);
+ async function addResolved(style,mapping,code,allowDuplicate=false){
+  try{await api('/api/admin/scans/items',{method:'POST',body:JSON.stringify({session_id:session.id,barcode:code,source_style_no:mapping.source_style_no,style_id:style.id,markup_pct:session.default_markup,allow_duplicate:allowDuplicate,resolution_status:'resolved'})});await reload();return true}
+  catch(error){if(error.status===409&&error.data?.duplicate){if(confirm(`Barcode ${code} is already in this session. Add another piece?`))return addResolved(style,mapping,code,true);return true}setNotice(error.message);return false}
+ }
+ async function processNext(){
+  if(processing.current||!queue.current.length)return;
+  processing.current=true;const code=queue.current.shift();
+  try{const data=await api(`/api/admin/barcodes/resolve?barcode=${encodeURIComponent(code)}`);if(data.status==='exact'||data.status==='alias'){await addResolved(data.style,data.mapping,code);processing.current=false;processNext()}else{setConfirmations(current=>[...current,{...data,scannedBarcode:code,confirmationId:crypto.randomUUID()}]);processing.current=false;processNext()}}
+  catch(error){setNotice(`${code}: ${error.message}`);processing.current=false;processNext()}
+ }
+ function enqueue(values){const codes=values.map(v=>String(v).trim()).filter(Boolean);if(!codes.length)return;queue.current.push(...codes);setBarcode('');processNext()}
+ function barcodeChanged(value){setBarcode(value);clearTimeout(timer.current);if(autoAdd&&value.trim().length>=4)timer.current=setTimeout(()=>enqueue([value]),450)}
+ function barcodeKeyDown(event){if(event.key==='Enter'||event.key==='Tab'){event.preventDefault();clearTimeout(timer.current);enqueue([barcode])}}
+ async function choose(confirmation,style,remember,prompt){if(remember)await api('/api/admin/barcodes/aliases',{method:'POST',body:JSON.stringify({source_style_no:confirmation.mapping.source_style_no,target_style_id:style.id,candidate_signature:confirmation.candidate_signature,prompt_on_multiple:prompt})});await addResolved(style,confirmation.mapping,confirmation.scannedBarcode);setConfirmations(current=>current.filter(item=>item.confirmationId!==confirmation.confirmationId))}
+ function editItem(id,key,value){setEdits(current=>({...current,[id]:{...current[id],[key]:value}}))}
+ async function saveEdits(){const changed=session.items.filter(item=>edits[item.id]).map(item=>({...item,...edits[item.id]}));if(!changed.length)return;await api('/api/admin/scans/items',{method:'PUT',body:JSON.stringify({items:changed})});setEdits({});await reload()}
+ async function remove(id){if(!confirm('Remove this piece from the session?'))return;await api(`/api/admin/scans/items?id=${id}`,{method:'DELETE'});reload()}
+ async function complete(){if(confirmations.length){setNotice(`Resolve or skip ${confirmations.length} pending sample ${confirmations.length===1?'match':'matches'} before logging selections.`);return}try{await saveEdits();const data=await api('/api/admin/scans',{method:'PUT',body:JSON.stringify({id:session.id,customer:session.customer,meeting_date:meetingDate,complete:true})});setSession(data.session);setNotice(`${data.selections_logged} new selection${data.selections_logged===1?'':'s'} logged for ${session.customer}. Existing linked selections were updated.`)}catch(error){setNotice(error.message)}}
+ function exportZip(){try{const rows=[];for(const i of session.items)for(let q=0;q<Number(i.quantity||1);q++)rows.push({'Style Number':i.shivani_style_no,'Jewelry Category':i.jewelry_category,Description:i.diamond_description,Metal:i.metal_kt,'Diamond Quality':qualityLabel(i.diamond_quality),'Total Carat Weight':i.cttw_snapshot,'Stone Type':'',Price:Number(i.final_price||0),Notes:'','Diamond Type':'','Secondary Navigation Category':''});const ws=XLSX.utils.json_to_sheet(rows),wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Selection');const excel=new Uint8Array(XLSX.write(wb,{bookType:'xlsx',type:'array'}));const files=[{name:'Selection.xlsx',data:excel}];for(const i of session.items){if(!i.image_data_url)continue;const[head,b64]=i.image_data_url.split(','),ext=(i.image_filename?.split('.').pop()||head.match(/image\/([^;]+)/)?.[1]||'jpg').replace('jpeg','jpg');files.push({name:`Images/${safeName(i.shivani_style_no)}.${ext}`,data:Uint8Array.from(atob(b64),c=>c.charCodeAt(0))})}downloadBlob(makeZip(files),`${safeName(session.name||'Customer Selection')}.zip`,'application/zip');setNotice(`Exported ${rows.length} rows and ${files.length-1} images.`)}catch(error){setNotice(`Export failed: ${error.message}`)}}
+ const presentation=session.mode==='presentation';
+ return <section className={presentation?'presentationMode':''}><div className="topbar"><div><h1>{session.name}</h1><p>{presentation?'Presentation Mode — costs and profitability are hidden.':'Costing Mode — review cost, markup, suggested, and final price.'}</p><small>Customer: <b>{session.customer||'Not entered'}</b></small></div><div className="row"><button className="secondary" onClick={back}>Back</button><button onClick={exportZip}><Download/> Export Excel + Images</button></div></div>{presentation&&<div className="presentationBanner"><Eye/> Presentation Mode Active — cost is hidden</div>}
+ <div className="scanEntryGrid"><div className="panel"><h2><ScanLine/> Continuous Scan</h2><p>Scanners that send Enter add instantly. Auto-add also submits after a short pause.</p><div className="scanBar"><input ref={input} value={barcode} onChange={e=>barcodeChanged(e.target.value)} onKeyDown={barcodeKeyDown} placeholder="Scan or type a barcode" autoFocus/><span className="scanStatus">{processing.current?'Adding…':'Ready'}</span></div><Check label="Auto-add after scan" value={autoAdd} onChange={setAutoAdd}/></div><div className="panel"><h2>Paste Multiple Barcodes</h2><p>Enter one barcode per line, then add the entire batch.</p><textarea className="bulkBarcodes" value={bulk} onChange={e=>setBulk(e.target.value)} placeholder={'413027\n413028\n413029'}/><button onClick={()=>{enqueue(bulk.split(/[\s,]+/));setBulk('')}}><Plus/> Add All Pieces</button></div></div>
+ {confirmations.length>0&&<div className="panel resolution"><div className="sectionHead"><div><h2>Samples Requiring Confirmation</h2><p>Keep scanning. Resolve these sample styles whenever you are ready.</p></div><span className="badge amber">{confirmations.length} pending</span></div><div className="confirmationQueue">{confirmations.map(confirmation=><div className="confirmationCard" key={confirmation.confirmationId}><div><span>Barcode {confirmation.mapping.barcode}</span><h3>{confirmation.mapping.source_style_no}</h3></div>{confirmation.candidates.length?<><p>Choose the live style:</p><div className="confirmationChoices">{confirmation.candidates.map(candidate=><div className="confirmationChoice" key={candidate.id}><b>{candidate.shivani_style_no}</b><small>{candidate.jewelry_category} · {candidate.metal_kt}</small><button onClick={()=>choose(confirmation,candidate,true,false)}>Choose & Remember</button><button className="secondary" onClick={()=>choose(confirmation,candidate,false,true)}>Use Once / Ask Next Time</button></div>)}</div></>:<p className="warn"><AlertTriangle/> No related live style found.</p>}<button className="ghost" onClick={()=>setConfirmations(current=>current.filter(item=>item.confirmationId!==confirmation.confirmationId))}>Skip</button></div>)}</div></div>}
+ <div className="panel"><div className="sectionHead"><h2>Pieces <span className="muted">{session.items.reduce((sum,item)=>sum+Number(item.quantity),0)} total</span></h2><div className="row"><Field type="date" label="Meeting Date" value={meetingDate} onChange={setMeetingDate}/><button className="secondary" onClick={saveEdits} disabled={!Object.keys(edits).length}><Save/> Save Price Changes</button><button onClick={complete}><Users/> {session.status==='complete'?'Update Logged Selections':'Log Selections'}</button></div></div><div className="tableWrap"><table><thead><tr><th>Barcode</th><th>Style</th><th>Details</th><th>Qty</th>{!presentation&&<th>Import Cost</th>}<th>Markup %</th>{!presentation&&<th>Suggested</th>}<th>Final Price</th>{!presentation&&<><th>Profit $</th><th>Margin %</th></>}<th/></tr></thead><tbody>{session.items.map(item=><ScanItemRow key={item.id} item={{...item,...edits[item.id]}} presentation={presentation} editItem={editItem} remove={remove}/>)}{!session.items.length&&<tr><td className="empty" colSpan="12">Scan, type, or paste barcodes above. Matching pieces appear automatically.</td></tr>}</tbody></table></div></div></section>
 }
+function ScanItemRow({item,presentation,editItem,remove}){const cost=Number(item.cost_snapshot||0),markup=Number(item.markup_pct||0),price=Number(item.final_price||0),suggested=cost*(1+markup/100);return <tr><td>{item.barcode}</td><td><b>{item.shivani_style_no}</b><small>{item.source_style_no!==item.shivani_style_no?`Scanned as ${item.source_style_no}`:''}</small></td><td>{item.jewelry_category}<small>{item.metal_kt} · {qualityLabel(item.diamond_quality)}</small></td><td><input className="tinyInput" inputMode="numeric" value={item.quantity??''} onChange={event=>editItem(item.id,'quantity',event.target.value)}/></td>{!presentation&&<td>{money(cost)}</td>}<td><input className="tinyInput" inputMode="decimal" value={item.markup_pct??''} onChange={event=>editItem(item.id,'markup_pct',event.target.value)}/></td>{!presentation&&<td>{money(suggested)}</td>}<td><input className="priceInput" inputMode="decimal" value={item.final_price??''} onChange={event=>editItem(item.id,'final_price',event.target.value)}/></td>{!presentation&&<><td>{money(price-cost)}</td><td>{price?num((price-cost)/price*100)+'%':'—'}</td></>}<td><button onClick={()=>remove(item.id)}><Trash2/></button></td></tr>}
+function ActivityLog({api,setNotice}){const[events,setEvents]=useState([]);useEffect(()=>{api('/api/admin/audit').then(d=>setEvents(d.events||[])).catch(e=>setNotice(e.message))},[]);return <section><div className="topbar"><div><h1>Activity Log</h1><p>The latest 500 authenticated actions, including preserved before/after details.</p></div></div><div className="panel"><div className="tableWrap"><table><thead><tr><th>When</th><th>Person</th><th>Action</th><th>Type</th><th>Record</th><th>Details</th></tr></thead><tbody>{events.map(e=><tr key={e.id}><td>{stamp(e.created_at)}</td><td><b>{e.user_name}</b></td><td>{e.action.replaceAll('_',' ')}</td><td>{e.entity_type}</td><td>{e.entity_id}</td><td><details><summary>View</summary><pre>{JSON.stringify({before:e.before_json?JSON.parse(e.before_json):null,after:e.after_json?JSON.parse(e.after_json):null,metadata:e.metadata_json?JSON.parse(e.metadata_json):null},null,2)}</pre></details></td></tr>)}</tbody></table></div></div></section>}
 
-function Dashboard({ styles, search, setSearch, loadDashboard, openStyle, archiveStyle, duplicateStyle, pricingUploads }) {
-  return <section>
-    <div className="topbar"><div><h1>Styles</h1><p>Main costs always recalculate from the active master diamond pricing file.</p></div><button onClick={() => openStyle('new')}><Plus size={18}/> New Style</button></div>
-    <div className="search"><Search size={18}/><input value={search} onChange={e => setSearch(e.target.value)} onKeyDown={e => e.key === 'Enter' && loadDashboard()} placeholder="Search style, vendor, factory, category..."/><button onClick={() => loadDashboard()}>Search</button></div>
-    <div className="tableWrap"><table><thead><tr><th>Style</th><th>Vendor</th><th>Category</th><th>Metal</th><th>CTTW</th><th>Diamond</th><th>Export</th><th>Import</th><th>SP</th><th>Warnings</th><th></th></tr></thead><tbody>
-      {styles.map(s => <tr key={s.id}><td><button className="linkBtn" onClick={() => openStyle(s.id)}>{s.shivani_style_no || 'Untitled'}</button><small>{s.factory}</small></td><td>{s.vendor_style_no}</td><td>{s.jewelry_category}</td><td>{s.metal_kt}</td><td>{num(s.current?.cttw)}</td><td>{money(s.current?.total_diamond_cost)}</td><td>{money(s.current?.total_export_cost)}</td><td><b>{money(s.current?.total_import_cost)}</b>{Number(s.current?.findings_total || 0) > 0 && <small>Including findings/fees</small>}</td><td><b>{money(s.selling_price)}</b>{Number(s.current?.findings_total || 0) > 0 && <small>Including findings/fees</small>}</td><td>{s.missing_price_count ? <span className="warn"><AlertTriangle size={15}/> {s.missing_price_count} missing</span> : '—'}</td><td className="actions"><button onClick={() => openStyle(s.id)}><Eye size={15}/> View</button><button onClick={() => duplicateStyle(s.id)}><Copy size={15}/></button><button onClick={() => archiveStyle(s.id)}><Trash2 size={15}/></button></td></tr>)}
-      {!styles.length && <tr><td colSpan="11" className="empty">No styles yet. Create one manually to start.</td></tr>}
-    </tbody></table></div>
-    <h2>Pricing Uploads</h2><div className="cards">{pricingUploads.map(p => <div className="miniCard" key={p.id}><b>{p.active ? 'Active' : 'Previous'}</b><span>{p.filename}</span><small>{date(p.uploaded_at)} · {p.row_count} rows</small></div>)}</div>
-  </section>;
-}
-
-
-function StyleDetail({ style, components, calc, orders, addOrder, editStyle, goBack, history }) {
-  const [order, setOrder] = useState({ customer: '', order_date: new Date().toISOString().slice(0,10), quantity: '', price: '', buying_group: '', memo_or_asset: 'Memo' });
-  const updateOrder = (k, v) => setOrder({ ...order, [k]: v });
-  const submitOrder = async (e) => {
-    e.preventDefault();
-    await addOrder(order);
-    setOrder({ customer: '', order_date: new Date().toISOString().slice(0,10), quantity: '', price: '', buying_group: '', memo_or_asset: 'Memo' });
-  };
-  const totals = calc?.totals || {};
-  return <section>
-    <div className="topbar"><div><h1>{style.shivani_style_no || 'Untitled Style'}</h1><p>Style details, saved assets, and customer order tracking.</p></div><div className="row"><button className="secondary" onClick={goBack}>Back</button><button onClick={editStyle}>Edit Style</button></div></div>
-    <div className="editorGrid">
-      <div className="panel"><h2>Style Details</h2>{style.image_data_url && <img className="stylePhoto" src={style.image_data_url} alt={style.image_filename || 'Style'} />}<div className="detailGrid"><Detail label="Vendor" value={style.factory}/><Detail label="Vendor Style No" value={style.vendor_style_no}/><Detail label="Category" value={style.jewelry_category}/><Detail label="Metal" value={style.metal_kt}/><Detail label="Diamond Quality" value={style.diamond_quality}/><Detail label="Merchandiser" value={style.merchandiser}/><Detail label="Description" value={style.diamond_description}/><Detail label="Notes" value={style.notes}/><Detail label="Picture" value={style.image_filename}/><Detail label="CAD / 3D File" value={style.model_filename}/></div></div>
-      <div className="panel sticky"><h2>Current Cost Summary</h2><Summary label="Diamond Cost" value={totals.total_diamond_cost}/><Summary label="Export Cost" value={totals.total_export_cost} bold/><Summary label="Import Cost" value={totals.total_import_cost} big/><Summary label="Selling Price" value={style.selling_price}/></div>
-    </div>
-    <div className="panel"><div className="sectionHead"><h2>Log Order</h2></div><form onSubmit={submitOrder} className="orderForm"><Field label="Customer" value={order.customer} onChange={v=>updateOrder('customer', v)}/><Field type="date" label="Order Date" value={order.order_date} onChange={v=>updateOrder('order_date', v)}/><Field label="Quantity" value={order.quantity} onChange={v=>updateOrder('quantity', v)}/><Field label="Price $" value={order.price} onChange={v=>updateOrder('price', v)}/><SelectField label="Buying Group" value={order.buying_group} onChange={v=>updateOrder('buying_group', v)} options={['', 'RJO', 'LJG', 'CBG', 'AGS', 'Other']}/><SelectField label="Memo or Asset" value={order.memo_or_asset} onChange={v=>updateOrder('memo_or_asset', v)} options={['Memo', 'Asset']}/><button type="submit"><Plus size={16}/> Log Order</button></form></div>
-    <div className="panel"><h2>Orders</h2><table><thead><tr><th>Customer</th><th>Order Date</th><th>Quantity</th><th>Price</th><th>Buying Group</th><th>Memo/Asset</th></tr></thead><tbody>{orders.map(o => <tr key={o.id}><td>{o.customer}</td><td>{o.order_date || '—'}</td><td>{o.quantity}</td><td>{o.price}</td><td>{o.buying_group || '—'}</td><td>{o.memo_or_asset}</td></tr>)}{!orders.length && <tr><td colSpan="6" className="empty">No orders logged yet.</td></tr>}</tbody></table></div>
-    <div className="panel"><h2>Diamond Components</h2><table><thead><tr><th>Shape</th><th>Quality</th><th>Each Wt</th><th>Qty</th><th>Total</th></tr></thead><tbody>{components.map((c, i) => <tr key={c.id || i}><td>{c.shape}</td><td>{c.quality}</td><td>{c.each_weight}</td><td>{c.quantity}</td><td>{money(calc?.components?.[i]?.line_total || 0)}</td></tr>)}</tbody></table></div>
-    <div className="panel"><h2><History size={18}/> Historical Pricing</h2><table><thead><tr><th>Date</th><th>Reason</th><th>Export</th><th>Duty</th><th>Tariff</th><th>Import</th></tr></thead><tbody>{history.map(h => <tr key={h.id}><td>{date(h.snapshot_at)}</td><td>{h.reason}</td><td>{money(h.total_export_cost)}</td><td>{money(h.duty)}</td><td>{money(h.tariff)}</td><td><b>{money(h.total_import_cost)}</b></td></tr>)}{!history.length && <tr><td colSpan="6" className="empty">No history yet.</td></tr>}</tbody></table></div>
-  </section>;
-}
-
-function Detail({ label, value }) { return <div className="detail"><span>{label}</span><b>{value || '—'}</b></div>; }
-
-function Editor({ style, setStyle, components, setComponents, calc, saveStyle, goBack, history }) {
-  const update = (k, v) => setStyle({ ...style, [k]: v });
-  const updateComp = (idx, k, v) => setComponents(components.map((c, i) => i === idx ? { ...c, [k]: v } : c));
-  const localCalc = useMemo(() => {
-    const diamond = components.reduce((sum, c) => {
-      const totalCtw = Number(c.each_weight || 0) * Number(c.quantity || 0);
-      if (c.pricing_mode === 'manual_total') return sum + Number(c.manual_total || 0);
-      if (c.pricing_mode === 'manual_unit') return sum + totalCtw * Number(c.manual_unitcost || 0);
-      return sum;
-    }, 0);
-    const metal = Number(style.net_wt_gms || 0) * Number(style.gold_per_gram || 0);
-    const exportCost = metal + diamond + Number(style.diamond_handling || 0) + Number(style.total_labor || 0);
-    const duty = exportCost * (Number(style.duty_pct || 0) / 100);
-    const tariff = (exportCost + duty) * (Number(style.tariff_pct || 0) / 100);
-    const findings = Number(style.pendant_chain || 0) + Number(style.earring_backs || 0) + Number(style.cad_fees || 0);
-    const importCost = exportCost + duty + tariff + findings;
-    const marginPct = Number(style.margin_pct || 0);
-    const suggestedSp = marginPct < 100 ? importCost / (1 - (marginPct / 100)) : 0;
-    return { metal, diamond, exportCost, duty, tariff, findings, importCost, suggestedSp };
-  }, [style, components]);
-  const totals = calc?.totals || localCalc;
-  const findingsTotal = Number((totals.findings_total ?? totals.findings) || 0);
-  return <section>
-    <div className="topbar"><div><h1>{style.shivani_style_no || 'New Style'}</h1><p>Save to calculate auto diamond lines from active pricing.</p></div><div className="row"><button className="secondary" onClick={goBack}>Back</button><button onClick={saveStyle}><Save size={18}/> Save & Recalculate</button></div></div>
-    <div className="editorGrid">
-      <div className="panel"><h2>Style Info</h2><div className="grid2">
-        <Field label="Vendor Name" value={style.factory} onChange={v=>update('factory', v)}/><Field label="Vendor Style No" value={style.vendor_style_no} onChange={v=>update('vendor_style_no', v)}/>
-        <Field label="Shivani Style Number" value={style.shivani_style_no} onChange={v=>update('shivani_style_no', v)}/><Field label="Jewelry Category" value={style.jewelry_category} onChange={v=>update('jewelry_category', v)}/>
-        <Field label="Metal KT" value={style.metal_kt} onChange={v=>update('metal_kt', v)}/><Field label="Diamond Quality" value={style.diamond_quality} onChange={v=>update('diamond_quality', v)}/>
-        <Field label="Merchandiser" value={style.merchandiser} onChange={v=>update('merchandiser', v)}/>
-      </div><Field label="Diamond Description" value={style.diamond_description} onChange={v=>update('diamond_description', v)}/><Field label="Notes" value={style.notes} onChange={v=>update('notes', v)} textarea /><div className="grid2"><FileField label="Style Picture" accept="image/*" filename={style.image_filename} onFile={(file, dataUrl) => setStyle({ ...style, image_filename: file.name, image_data_url: dataUrl })}/><FileField label="CAD / 3D File" accept=".stl,.3dm,.glb" filename={style.model_filename} onFile={(file, dataUrl) => setStyle({ ...style, model_filename: file.name, model_data_url: dataUrl, model_mime_type: file.type || 'application/octet-stream' })}/></div></div>
-
-      <div className="panel sticky"><h2>Current Cost Summary</h2><Summary label="Metal Cost" value={totals.total_metal_cost ?? totals.metal}/><Summary label="Diamond Cost" value={totals.total_diamond_cost ?? totals.diamond}/><Summary label="Handling" value={style.diamond_handling}/><Summary label="Labor" value={style.total_labor}/><hr/><Summary label="Export Cost" value={totals.total_export_cost ?? totals.exportCost} bold/><Summary label={`Duty (${style.duty_pct || 0}%)`} value={totals.duty}/><Summary label={`Tariff (${style.tariff_pct || 0}%)`} value={totals.tariff}/><Summary label="Findings / Other Fees" value={totals.findings_total ?? totals.findings}/><Summary label="Import Cost" value={totals.total_import_cost ?? totals.importCost} big/>{findingsTotal > 0 && <small>Including chain, earring backs, and/or CAD fees.</small>}<small>Gold loss % is stored for reference only and is not included in metal cost.</small></div>
-    </div>
-
-    <div className="panel"><h2>Gold / Metal</h2><div className="grid4"><Field type="number" label="Net wt. in gms" value={style.net_wt_gms} onChange={v=>update('net_wt_gms', v)}/><Field type="number" label="Gold Loss % (reference only)" value={style.gold_loss_pct} onChange={v=>update('gold_loss_pct', v)}/><Field type="number" label="Current Gold Lock" value={style.current_gold_lock} onChange={v=>update('current_gold_lock', v)}/><Field type="number" label="Gold per Gram $" value={style.gold_per_gram} onChange={v=>update('gold_per_gram', v)}/></div></div>
-
-    <div className="panel"><div className="sectionHead"><h2>Diamond Components</h2><button onClick={() => setComponents([...components, blankComponent()])}><Plus size={16}/> Add Stone Line</button></div><div className="componentTable"><table><thead><tr><th>Shape</th><th>Quality</th><th>Each Wt</th><th>Qty</th><th>Mode</th><th>Manual $/ct</th><th>Manual Total</th><th>Resolved $/ct</th><th>Total</th><th></th></tr></thead><tbody>{components.map((c, i) => {
-      const resolved = calc?.components?.[i];
-      return <tr key={c.id || i}><td><input value={c.shape || ''} onChange={e=>updateComp(i,'shape',e.target.value)} placeholder="MQ"/></td><td><input value={c.quality || ''} onChange={e=>updateComp(i,'quality',e.target.value)} placeholder="E"/></td><td><input type="number" step="0.001" value={c.each_weight || ''} onChange={e=>updateComp(i,'each_weight',e.target.value)}/></td><td><input type="number" step="1" value={c.quantity || ''} onChange={e=>updateComp(i,'quantity',e.target.value)}/></td><td><select value={c.pricing_mode || 'auto'} onChange={e=>updateComp(i,'pricing_mode',e.target.value)}><option value="auto">Auto</option><option value="manual_unit">Manual $/ct</option><option value="manual_total">Manual total</option></select></td><td><input type="number" value={c.manual_unitcost || ''} onChange={e=>updateComp(i,'manual_unitcost',e.target.value)}/></td><td><input type="number" value={c.manual_total || ''} onChange={e=>updateComp(i,'manual_total',e.target.value)}/></td><td>{resolved?.match_status === 'missing_price' ? <span className="warn">Missing</span> : money(resolved?.resolved_unitcost || 0)}</td><td>{money(resolved?.line_total || 0)}</td><td><button className="icon" onClick={()=>setComponents(components.filter((_,x)=>x!==i))}><Trash2 size={15}/></button></td></tr>})}</tbody></table></div></div>
-
-    <div className="panel"><h2>Other Costs / Import</h2><div className="grid4"><Field type="number" label="Diamond Handling" value={style.diamond_handling} onChange={v=>update('diamond_handling', v)}/><Field type="number" label="Total Labor" value={style.total_labor} onChange={v=>update('total_labor', v)}/><Field type="number" label="Duty %" value={style.duty_pct} onChange={v=>update('duty_pct', v)}/><Field type="number" label="Tariff %" value={style.tariff_pct} onChange={v=>update('tariff_pct', v)}/></div><h2>Findings / Other Fees</h2><div className="grid4"><Field type="number" label="Pendant Chain" value={style.pendant_chain} onChange={v=>update('pendant_chain', v)}/><Field type="number" label="Earring Backs" value={style.earring_backs} onChange={v=>update('earring_backs', v)}/><Field type="number" label="CAD Fees" value={style.cad_fees} onChange={v=>update('cad_fees', v)}/></div></div>
-
-    <div className="panel"><h2>Margin Calculator</h2><div className="grid4"><Field type="number" label="Margin %" value={style.margin_pct} onChange={v=>update('margin_pct', v)}/><Summary label="Suggested SP" value={totals.suggestedSp ?? localCalc.suggestedSp}/><Field type="number" label="SP" value={style.selling_price} onChange={v=>update('selling_price', v)}/></div>{findingsTotal > 0 && <small>SP includes any chain, earring backs, and/or CAD fees included above.</small>}</div>
-
-    <div className="panel"><h2><History size={18}/> Historical Pricing</h2><table><thead><tr><th>Date</th><th>Reason</th><th>Export</th><th>Duty</th><th>Tariff</th><th>Import</th></tr></thead><tbody>{history.map(h => <tr key={h.id}><td>{date(h.snapshot_at)}</td><td>{h.reason}</td><td>{money(h.total_export_cost)}</td><td>{money(h.duty)}</td><td>{money(h.tariff)}</td><td><b>{money(h.total_import_cost)}</b></td></tr>)}{!history.length && <tr><td colSpan="6" className="empty">No history yet. History is created when a new diamond pricing file is uploaded.</td></tr>}</tbody></table></div>
-  </section>;
-}
-
-function SelectField({ label, value, onChange, options }) { return <label className="field"><span>{label}</span><select value={value || ''} onChange={e=>onChange(e.target.value)}>{options.map(o => <option key={o || 'blank'} value={o}>{o || 'Not specified'}</option>)}</select></label>; }
-function FileField({ label, accept, filename, onFile }) { return <label className="field"><span>{label}</span><input type="file" accept={accept} onChange={async e => { const file = e.target.files?.[0]; if (!file) return; const reader = new FileReader(); reader.onload = () => onFile(file, reader.result); reader.readAsDataURL(file); }}/>{filename && <small>Saved: {filename}</small>}</label>; }
-function Field({ label, value, onChange, type='text', textarea=false }) { return <label className="field"><span>{label}</span>{textarea ? <textarea value={value || ''} onChange={e=>onChange(e.target.value)}/> : <input type={type} step="any" value={value ?? ''} onChange={e=>onChange(e.target.value)}/>}</label>; }
-function Summary({ label, value, bold, big }) { return <div className={`summary ${bold?'bold':''} ${big?'big':''}`}><span>{label}</span><b>{money(value)}</b></div>; }
-
-createRoot(document.getElementById('root')).render(<App />);
+function CostSummary({totals}){return <div className="panel sticky"><h2>Current Cost Summary</h2><Summary label="Metal Cost" value={totals.total_metal_cost}/><Summary label="Diamond Cost" value={totals.total_diamond_cost}/><Summary label="Export Cost" value={totals.total_export_cost}/><Summary label="Duty" value={totals.duty}/><Summary label="Tariff" value={totals.tariff}/><Summary label="Import Cost" value={totals.total_import_cost} big/></div>}
+function Detail({label,value}){return <div className="detail"><span>{label}</span><b>{value||'—'}</b></div>}
+function Field({label,value,onChange,type='text',textarea=false}){return <label className="field"><span>{label}</span>{textarea?<textarea value={value||''} onChange={e=>onChange(e.target.value)}/>:<input type={type} step="any" value={value??''} onChange={e=>onChange(e.target.value)}/>}</label>}
+function SelectField({label,value,onChange,options}){return <label className="field"><span>{label}</span><select value={value||''} onChange={e=>onChange(e.target.value)}>{options.map(o=>{const[v,l]=Array.isArray(o)?o:[o,o||'Not specified'];return <option key={v||'blank'} value={v}>{l}</option>})}</select></label>}
+function Check({label,value,onChange}){return <label className="check"><input type="checkbox" checked={!!value} onChange={e=>onChange(e.target.checked)}/><span>{label}</span></label>}
+function FileField({label,accept,filename,onFile}){return <label className="field"><span>{label}</span><input type="file" accept={accept} onChange={async e=>{const f=e.target.files?.[0];if(!f)return;const r=new FileReader();r.onload=()=>onFile(f,r.result);r.readAsDataURL(f)}}/>{filename&&<small>Saved: {filename}</small>}</label>}
+function Summary({label,value,big}){return <div className={`summary ${big?'big':''}`}><span>{label}</span><b>{money(value)}</b></div>}
+function safeName(v){return String(v||'export').replace(/[\\/:*?"<>|]+/g,'-').trim()||'export'}
+function crc32(bytes){let c=-1;for(const b of bytes){c^=b;for(let k=0;k<8;k++)c=(c>>>1)^((c&1)?0xedb88320:0)}return(c^-1)>>>0}
+function makeZip(files){const enc=new TextEncoder(),parts=[],central=[];let offset=0;const u16=n=>new Uint8Array([n&255,n>>>8&255]),u32=n=>new Uint8Array([n&255,n>>>8&255,n>>>16&255,n>>>24&255]);for(const f of files){const name=enc.encode(f.name),data=f.data instanceof Uint8Array?f.data:new Uint8Array(f.data),crc=crc32(data),local=concat(u32(0x04034b50),u16(20),u16(0),u16(0),u16(0),u16(0),u32(crc),u32(data.length),u32(data.length),u16(name.length),u16(0),name,data);parts.push(local);central.push(concat(u32(0x02014b50),u16(20),u16(20),u16(0),u16(0),u16(0),u16(0),u32(crc),u32(data.length),u32(data.length),u16(name.length),u16(0),u16(0),u16(0),u16(0),u32(0),u32(offset),name));offset+=local.length}const center=concat(...central),end=concat(u32(0x06054b50),u16(0),u16(0),u16(files.length),u16(files.length),u32(center.length),u32(offset),u16(0));return new Blob([...parts,center,end],{type:'application/zip'})}
+function concat(...arrays){const out=new Uint8Array(arrays.reduce((n,a)=>n+a.length,0));let o=0;for(const a of arrays){out.set(a,o);o+=a.length}return out}
+function downloadBlob(blob,name,type){const a=document.createElement('a');a.href=URL.createObjectURL(blob instanceof Blob?blob:new Blob([blob],{type}));a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}
+createRoot(document.getElementById('root')).render(<App/>);

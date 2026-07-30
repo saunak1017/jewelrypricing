@@ -1,4 +1,4 @@
-import { ensureSchema, json, requireAdmin, uid, nowIso, calculateStyle } from '../../../_utils.js';
+import { audit, ensureSchema, json, requireAdmin, uid, nowIso, calculateStyle } from '../../../_utils.js';
 
 export async function onRequestGet(context) {
   const unauthorized = await requireAdmin(context);
@@ -11,8 +11,9 @@ export async function onRequestGet(context) {
   const comps = await db.prepare(`SELECT * FROM diamond_components WHERE style_id = ? ORDER BY sort_order ASC`).bind(id).all();
   const calc = await calculateStyle(db, style, comps.results || []);
   const hist = await db.prepare(`SELECT * FROM cost_history WHERE style_id = ? ORDER BY snapshot_at DESC LIMIT 100`).bind(id).all();
-  const orders = await db.prepare(`SELECT * FROM style_orders WHERE style_id = ? ORDER BY order_date DESC, created_at DESC`).bind(id).all();
-  return json({ style, components: comps.results || [], calculation: calc, history: hist.results || [], orders: orders.results || [] });
+  const orders = await db.prepare(`SELECT o.*, cu.name created_by_name, uu.name updated_by_name FROM style_orders o LEFT JOIN users cu ON cu.id=o.created_by LEFT JOIN users uu ON uu.id=o.updated_by WHERE style_id = ? ORDER BY order_date DESC, o.created_at DESC`).bind(id).all();
+  const selections = await db.prepare(`SELECT s.*, cu.name created_by_name, uu.name updated_by_name FROM style_selections s LEFT JOIN users cu ON cu.id=s.created_by LEFT JOIN users uu ON uu.id=s.updated_by WHERE style_id = ? ORDER BY meeting_date DESC, s.created_at DESC`).bind(id).all();
+  return json({ style, components: comps.results || [], calculation: calc, history: hist.results || [], orders: orders.results || [], selections: selections.results || [] });
 }
 
 export async function onRequestPost(context) {
@@ -24,7 +25,7 @@ export async function onRequestPost(context) {
   const id = context.params.id === 'new' ? uid('style') : context.params.id;
   const now = nowIso();
   const s = body.style || {};
-  const exists = await db.prepare(`SELECT id, created_at FROM styles WHERE id = ?`).bind(id).first();
+  const exists = await db.prepare(`SELECT * FROM styles WHERE id = ?`).bind(id).first();
   if (exists) {
     await db.prepare(`UPDATE styles SET
       factory=?, vendor_style_no=?, shivani_style_no=?, jewelry_category=?, metal_kt=?, diamond_description=?, diamond_quality=?,
@@ -52,6 +53,7 @@ export async function onRequestPost(context) {
   const style = await db.prepare(`SELECT * FROM styles WHERE id = ?`).bind(id).first();
   const savedComps = await db.prepare(`SELECT * FROM diamond_components WHERE style_id = ? ORDER BY sort_order ASC`).bind(id).all();
   const calc = await calculateStyle(db, style, savedComps.results || []);
+  await audit(db, context.data.user, exists ? 'STYLE_UPDATED' : 'STYLE_CREATED', 'style', id, exists, style);
   return json({ ok: true, id, style, components: savedComps.results || [], calculation: calc });
 }
 
@@ -60,6 +62,8 @@ export async function onRequestDelete(context) {
   if (unauthorized) return unauthorized;
   const db = context.env.DB;
   await ensureSchema(db);
+  const before = await db.prepare(`SELECT * FROM styles WHERE id=?`).bind(context.params.id).first();
   await db.prepare(`UPDATE styles SET archived = 1, updated_at = ? WHERE id = ?`).bind(nowIso(), context.params.id).run();
+  await audit(db, context.data.user, 'STYLE_ARCHIVED', 'style', context.params.id, before);
   return json({ ok: true });
 }

@@ -8,14 +8,78 @@ export function json(data, status = 200) {
   });
 }
 
-export async function requireAdmin(context) {
-  const expected = context.env.ADMIN_PASSWORD || "admin123";
-  const auth = context.request.headers.get("authorization") || "";
-  const token = auth.replace(/^Bearer\s+/i, "").trim();
-  if (!token || token !== expected) {
-    return json({ error: "Unauthorized" }, 401);
+const DEFAULT_USERS = { Administrator: "admin123" };
+const SESSION_COOKIE = "jc_session";
+const NAMED_USERS = ["Saunak", "Atit", "Mehul", "Mayur", "Bhavesh", "Sanil", "Kyi", "Hema", "Kirti"];
+
+export function configuredUsers(env) {
+  const individualUsers = {};
+  for (const name of NAMED_USERS) {
+    const value = env[`${name}_Password`] ?? env[`${name}_PASSWORD`] ?? env[`${name.toUpperCase()}_PASSWORD`];
+    if (value !== undefined && String(value) !== "") individualUsers[name] = String(value);
   }
-  return null;
+  const raw = String(env.USER_PASSWORDS || "").trim();
+  if (raw) {
+    for (const candidate of [raw, `{${raw}}`]) {
+      try {
+        let parsed = JSON.parse(candidate);
+        if (typeof parsed === "string") parsed = JSON.parse(parsed);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && Object.keys(parsed).length) return { ...parsed, ...individualUsers };
+      } catch (_) { /* Try the next supported representation. */ }
+    }
+    throw new Error('USER_PASSWORDS is invalid. Use one JSON object such as {"Atit":"password","Mehul":"password"}.');
+  }
+  if (Object.keys(individualUsers).length) return individualUsers;
+  return env.ADMIN_PASSWORD ? { Administrator: env.ADMIN_PASSWORD } : DEFAULT_USERS;
+}
+
+function cookieValue(request, name) {
+  const cookie = request.headers.get("cookie") || "";
+  return cookie.split(";").map(v => v.trim()).find(v => v.startsWith(`${name}=`))?.slice(name.length + 1) || "";
+}
+
+export async function requireAdmin(context) {
+  const db = context.env.DB;
+  await ensureSchema(db);
+  const token = cookieValue(context.request, SESSION_COOKIE);
+  if (token) {
+    const session = await db.prepare(`SELECT s.*, u.name FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ? AND s.expires_at > ? AND u.active = 1`).bind(token, nowIso()).first();
+    if (session) {
+      context.data.user = { id: session.user_id, name: session.name };
+      return null;
+    }
+  }
+  // Keep Bearer authentication working during deployment and local migration.
+  const auth = (context.request.headers.get("authorization") || "").replace(/^Bearer\s+/i, "").trim();
+  let users;
+  try { users = configuredUsers(context.env); }
+  catch (error) { return json({ error: error.message }, 500); }
+  const match = Object.entries(users).find(([, password]) => String(password) === auth);
+  if (match) {
+    const id = `user_${slug(match[0])}`;
+    await upsertUser(db, id, match[0]);
+    context.data.user = { id, name: match[0] };
+    return null;
+  }
+  return json({ error: "Unauthorized" }, 401);
+}
+
+export function sessionCookie(token, maxAge = 60 * 60 * 24 * 7) {
+  return `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${maxAge}`;
+}
+
+export async function upsertUser(db, id, name) {
+  await db.prepare(`INSERT INTO users (id, name, active, created_at, updated_at) VALUES (?, ?, 1, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET name=excluded.name, active=1, updated_at=excluded.updated_at`).bind(id, name, nowIso(), nowIso()).run();
+}
+
+export async function audit(db, user, action, entityType, entityId, before = null, after = null, metadata = null) {
+  await db.prepare(`INSERT INTO audit_log (id, user_id, user_name, action, entity_type, entity_id, before_json, after_json, metadata_json, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(uid("audit"), user?.id || "system", user?.name || "System", action, entityType, entityId || "", before ? JSON.stringify(before) : null, after ? JSON.stringify(after) : null, metadata ? JSON.stringify(metadata) : null, nowIso()).run();
+}
+
+export function slug(value) {
+  return String(value || "user").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
 }
 
 export function toNumber(value, fallback = 0) {
@@ -32,8 +96,24 @@ export function nowIso() {
   return new Date().toISOString();
 }
 
+const schemaPromises = new WeakMap();
+
 export async function ensureSchema(db) {
+  if (schemaPromises.has(db)) return schemaPromises.get(db);
+  const promise = initializeSchema(db).catch(error => {
+    schemaPromises.delete(db);
+    throw error;
+  });
+  schemaPromises.set(db, promise);
+  return promise;
+}
+
+async function initializeSchema(db) {
   await db.batch([
+    db.prepare(`CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, name TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, user_id TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL, FOREIGN KEY(user_id) REFERENCES users(id))`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS audit_log (id TEXT PRIMARY KEY, user_id TEXT, user_name TEXT, action TEXT NOT NULL, entity_type TEXT, entity_id TEXT, before_json TEXT, after_json TEXT, metadata_json TEXT, created_at TEXT NOT NULL)`),
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at DESC)`),
     db.prepare(`CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL,
@@ -122,6 +202,20 @@ export async function ensureSchema(db) {
       updated_at TEXT NOT NULL,
       FOREIGN KEY(style_id) REFERENCES styles(id) ON DELETE CASCADE
     )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS style_selections (
+      id TEXT PRIMARY KEY, style_id TEXT NOT NULL, customer TEXT, meeting_date TEXT, proposed_price REAL, buying_group TEXT,
+      modifications INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'complete', cost_snapshot REAL DEFAULT 0,
+      created_by TEXT, updated_by TEXT, scan_session_id TEXT, scan_item_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+      FOREIGN KEY(style_id) REFERENCES styles(id) ON DELETE CASCADE
+    )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS style_imports (id TEXT PRIMARY KEY, filename TEXT, row_count INTEGER DEFAULT 0, imported_at TEXT NOT NULL, imported_by TEXT)`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS barcode_uploads (id TEXT PRIMARY KEY, filename TEXT, uploaded_at TEXT NOT NULL, uploaded_by TEXT, active INTEGER NOT NULL DEFAULT 0, row_count INTEGER DEFAULT 0)`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS barcode_mappings (id TEXT PRIMARY KEY, upload_id TEXT NOT NULL, barcode TEXT NOT NULL, source_style_no TEXT, base_key TEXT, UNIQUE(upload_id, barcode), FOREIGN KEY(upload_id) REFERENCES barcode_uploads(id))`),
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_barcode_lookup ON barcode_mappings(upload_id, barcode)`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS style_aliases (id TEXT PRIMARY KEY, source_style_no TEXT NOT NULL UNIQUE, target_style_id TEXT NOT NULL, candidate_signature TEXT, prompt_on_multiple INTEGER DEFAULT 0, confirmed_by TEXT, confirmed_at TEXT NOT NULL)`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS scan_selection_links (scan_item_id TEXT PRIMARY KEY, selection_id TEXT NOT NULL, scan_session_id TEXT NOT NULL, created_at TEXT NOT NULL)`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS scan_sessions (id TEXT PRIMARY KEY, name TEXT, customer TEXT, mode TEXT NOT NULL, default_markup REAL DEFAULT 45, created_by TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, status TEXT DEFAULT 'open')`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS scan_items (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, barcode TEXT, source_style_no TEXT, style_id TEXT, quantity INTEGER DEFAULT 1, cost_snapshot REAL DEFAULT 0, cttw_snapshot REAL DEFAULT 0, markup_pct REAL DEFAULT 45, final_price REAL DEFAULT 0, resolution_status TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(session_id) REFERENCES scan_sessions(id) ON DELETE CASCADE)`),
     db.prepare(`CREATE TABLE IF NOT EXISTS cost_history (
       id TEXT PRIMARY KEY,
       style_id TEXT NOT NULL,
@@ -152,11 +246,26 @@ export async function ensureSchema(db) {
     ["image_data_url", "TEXT DEFAULT ''"],
     ["model_filename", "TEXT DEFAULT ''"],
     ["model_data_url", "TEXT DEFAULT ''"],
-    ["model_mime_type", "TEXT DEFAULT ''"]
+    ["model_mime_type", "TEXT DEFAULT ''"],
+    ["cost_source", "TEXT DEFAULT 'calculated'"],
+    ["imported_stone_count", "REAL DEFAULT 0"], ["imported_cttw", "REAL DEFAULT 0"],
+    ["imported_metal_cost", "REAL DEFAULT 0"], ["imported_diamond_cost", "REAL DEFAULT 0"],
+    ["imported_export_cost", "REAL DEFAULT 0"], ["imported_duty", "REAL DEFAULT 0"],
+    ["imported_tariff", "REAL DEFAULT 0"], ["imported_import_cost", "REAL DEFAULT 0"]
   ];
-  for (const [name, type] of styleColumns) {
-    await db.prepare(`ALTER TABLE styles ADD COLUMN ${name} ${type}`).run().catch(() => {});
-  }
+  const styleInfo = await db.prepare(`PRAGMA table_info(styles)`).all();
+  const existingStyleColumns = new Set((styleInfo.results || []).map(column => column.name));
+  for (const [name, type] of styleColumns) if (!existingStyleColumns.has(name)) await db.prepare(`ALTER TABLE styles ADD COLUMN ${name} ${type}`).run();
+  const orderColumns = [["status", "TEXT DEFAULT 'complete'"], ["cost_snapshot", "REAL DEFAULT 0"], ["created_by", "TEXT"], ["updated_by", "TEXT"]];
+  const orderInfo = await db.prepare(`PRAGMA table_info(style_orders)`).all();
+  const existingOrderColumns = new Set((orderInfo.results || []).map(column => column.name));
+  for (const [name, type] of orderColumns) if (!existingOrderColumns.has(name)) await db.prepare(`ALTER TABLE style_orders ADD COLUMN ${name} ${type}`).run();
+  const selectionInfo = await db.prepare(`PRAGMA table_info(style_selections)`).all();
+  const existingSelectionColumns = new Set((selectionInfo.results || []).map(column => column.name));
+  for (const [name, type] of [["scan_session_id", "TEXT"], ["scan_item_id", "TEXT"]]) if (!existingSelectionColumns.has(name)) await db.prepare(`ALTER TABLE style_selections ADD COLUMN ${name} ${type}`).run();
+  const scanInfo = await db.prepare(`PRAGMA table_info(scan_items)`).all();
+  const existingScanColumns = new Set((scanInfo.results || []).map(column => column.name));
+  for (const [name, type] of [["cost_snapshot", "REAL DEFAULT 0"], ["cttw_snapshot", "REAL DEFAULT 0"]]) if (!existingScanColumns.has(name)) await db.prepare(`ALTER TABLE scan_items ADD COLUMN ${name} ${type}`).run();
 }
 
 export async function getActiveUpload(db) {
@@ -238,21 +347,23 @@ export async function calculateStyle(db, style, components, activeUpload = null)
   const findings = toNumber(style.pendant_chain) + toNumber(style.earring_backs) + toNumber(style.cad_fees);
   const importCost = exportCost + duty + tariff + findings;
 
+  const imported = style.cost_source === "imported";
   return {
     active_pricing_upload: upload || null,
     components: enriched,
     totals: {
-      stone_count: round(stoneCount),
-      cttw: round(totalCtw),
-      total_metal_cost: round(totalMetalCost),
-      total_diamond_cost: round(totalDiamondCost),
+      stone_count: round(imported ? style.imported_stone_count : stoneCount),
+      cttw: round(imported ? style.imported_cttw : totalCtw),
+      total_metal_cost: round(imported ? style.imported_metal_cost : totalMetalCost),
+      total_diamond_cost: round(imported ? style.imported_diamond_cost : totalDiamondCost),
       diamond_handling: round(handling),
       total_labor: round(labor),
-      total_export_cost: round(exportCost),
-      duty: round(duty),
-      tariff: round(tariff),
+      total_export_cost: round(imported ? style.imported_export_cost : exportCost),
+      duty: round(imported ? style.imported_duty : duty),
+      tariff: round(imported ? style.imported_tariff : tariff),
       findings_total: round(findings),
-      total_import_cost: round(importCost)
+      total_import_cost: round(imported ? style.imported_import_cost : importCost),
+      cost_source: imported ? "imported" : "calculated"
     }
   };
 }

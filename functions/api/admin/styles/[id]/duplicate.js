@@ -1,4 +1,4 @@
-import { ensureSchema, json, requireAdmin, uid, nowIso } from '../../../../_utils.js';
+import { audit, ensureSchema, json, requireAdmin, uid, nowIso } from '../../../../_utils.js';
 
 export async function onRequestPost(context) {
   const unauthorized = await requireAdmin(context);
@@ -20,5 +20,6 @@ export async function onRequestPost(context) {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .bind(uid('comp'), id, c.sort_order, c.shape, c.quality, c.color_clarity, c.each_weight, c.quantity, c.pricing_mode, c.manual_unitcost, c.manual_total, c.notes).run();
   }
+  await audit(db, context.data.user, 'STYLE_DUPLICATED', 'style', id, null, { source_style_id: context.params.id });
   return json({ ok: true, id });
 }
